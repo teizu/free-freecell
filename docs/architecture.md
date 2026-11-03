@@ -95,7 +95,9 @@ Ctrl／Meta-Z と Ctrl／Meta-Y はボタンと同じ履歴操作へ渡します
 
 ## 小画面での盤面配置
 
-最大化は `body.maximized` と固定配置の `#board-scroll` で行います。ピンチが制限される場合があるネイティブ Fullscreen API は使いません。`#maximize` はカード再描画の外へ置き、VisualViewport の位置と倍率で右上へ追従させます。背後の要素は visibility で非表示にし、Tab やタップの対象から外しつつページ高を保ちます。切り替え時にドラッグと後続の自動移動を止め、進行や履歴を変えず再計算します。解除時は元のスクロール位置へ戻します。
+最大化は `body.maximized` と固定配置の `#board-scroll` を共通の表示にし、対応環境では実入力から `document.documentElement.requestFullscreen({ navigationUI: 'hide' })` を呼びます。アドレスバーを含むブラウザー UI の非表示を要求し、非対応・開始拒否時はページ内最大化を維持します。`fullscreenchange` で実際の状態を反映するため、戻る・Escape・ブラウザー側の終了操作でも通常表示へ復帰します。非同期の入退出中はボタンを無効にし、退出が拒否された場合は表示を維持して再試行可能にします。全画面の通知が重なっても元のスクロール位置を上書きしません。
+
+全画面中の標準ピンチはブラウザーによって制限されます。独自の拡縮は追加せず、通常表示へ戻せば標準ピンチを使えます。API と制約は [requestFullscreen](https://developer.mozilla.org/en-US/docs/Web/API/Element/requestFullscreen) と [モバイルでの拡縮制限](https://developer.mozilla.org/en-US/docs/Web/API/Fullscreen_API/Guide#viewport_scaling_in_mobile_browsers) を参照します。`#maximize` はカード再描画の外へ置き、VisualViewport の位置と倍率で右上へ追従させます。背後の要素は visibility で非表示にし、Tab やタップの対象から外しつつページ高を保ちます。切り替え時にドラッグと後続の自動移動を止め、進行や履歴を変えず再計算します。解除時は元のスクロール位置へ戻します。
 
 幅 800 CSS px 以下、または高さ 500 CSS px 以下では、8 列と上段の全セルを横スクロールなしで並べます。
 CSS で間隔・見出し・操作ボタンを縮め、JavaScript で表示領域の高さ、盤面の開始位置、最長列からカード高と重なり幅を計算します。

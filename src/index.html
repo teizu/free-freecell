@@ -15,21 +15,21 @@
   <body>
     <header class="site-header">
       <div class="brand"><span aria-hidden="true">♣</span><h1>Free-FreeCell</h1></div>
-      <button id="sound-toggle" type="button" aria-pressed="true">♪ 音声オン</button>
+      <button id="sound-toggle" aria-pressed="true">♪ 音声オン</button>
     </header>
     <main>
       <section class="game" aria-label="フリーセル">
         <div class="toolbar" aria-label="ゲームの操作">
           <div class="actions">
-            <button id="new-game" class="primary" type="button">新しいゲーム</button>
-            <button id="restart" type="button">最初からやり直す</button>
+            <button id="new-game" class="primary">新しいゲーム</button>
+            <button id="restart">最初からやり直す</button>
           </div>
           <div class="actions">
-            <button id="undo" type="button" aria-keyshortcuts="Control+Z Meta+Z" disabled><span aria-hidden="true">↶</span> 戻す</button>
-            <button id="redo" type="button" aria-keyshortcuts="Control+Y Meta+Y" disabled><span aria-hidden="true">↷</span> やり直す</button>
+            <button id="undo" aria-keyshortcuts="Control+Z Meta+Z" disabled><span aria-hidden="true">↶</span> 戻す</button>
+            <button id="redo" aria-keyshortcuts="Control+Y Meta+Y" disabled><span aria-hidden="true">↷</span> やり直す</button>
           </div>
           <div class="actions">
-            <button id="auto-home" type="button">自動</button>
+            <button id="auto-home">自動</button>
             <label class="auto-toggle"><input id="auto-enabled" type="checkbox">自動で送る</label>
           </div>
         </div>
@@ -38,21 +38,21 @@
           <div><dt>手数</dt><dd id="moves">0</dd></div>
           <div><dt>ホーム</dt><dd><span id="progress">0</span><small> / 52</small></dd></div>
         </dl>
-        <p id="message" class="message" role="status" aria-live="polite" aria-atomic="true">カードを選んでから、移動先を選んでください。</p>
+        <p id="message" class="message" role="status" aria-live="polite" aria-atomic="true">カード → 移動先を選択。</p>
         <div id="win-panel" class="win-panel" hidden>
           <h2>クリア！</h2>
-          <button id="win-new" type="button">もう一局遊ぶ</button>
+          <button id="win-new">もう一局遊ぶ</button>
         </div>
         <div id="board-scroll" class="board-scroll" tabindex="0" role="region" aria-label="盤面">
-          <button id="maximize" type="button" aria-pressed="false">最大化</button>
+          <button id="maximize" aria-pressed="false">最大化</button>
           <div id="board" class="board"></div>
         </div>
-        <p class="board-help">タップでカード → 移動先を選ぶかドラッグ。ダブルクリック・ダブルタップはホーム、次にフリーセルへ。</p>
+        <p class="board-help">タップ・ドラッグで移動。2 回押しはホーム優先、次にフリーセルへ。</p>
         <noscript><p class="message">遊ぶにはブラウザーの JavaScript を有効にしてください。</p></noscript>
       </section>
       <div class="availability">
         <p id="offline-status" role="status">オフラインの準備を確認しています…</p>
-        <button id="apply-update" type="button" hidden>今すぐ更新</button>
+        <button id="apply-update" hidden>今すぐ更新</button>
         <p id="storage-status" role="status" hidden></p>
       </div>
       <details class="rules">
@@ -63,10 +63,10 @@
           <li>ホームセルは同じマークを A から K の順に集めます。全 52 枚でクリアです。</li>
           <li>赤黒交互の連続札はまとめて動かせます。上限は（空きフリーセル + 1）× 2 の空き列数乗。移動先の空列は数えません。</li>
         </ol>
-        <p>ドラッグは盤面外で離すか Escape で中止、2 本指で拡縮できます。Tab で札や枠へ移動し、Enter / Space で選択・移動、Escape で選択解除。</p>
-        <p>Ctrl-Z で戻す、Ctrl-Y でやり直す操作ができます（Mac は ⌘ でも可）。</p>
-        <p>「自動」は安全な札をホームへ送ります。チェック時は初手を手動で動かすと、以後の操作後に自動で送ります。対象は A・2、逆色の両ホームが 1 つ下、または逆色両方が 2 つ下・同色の相方が 3 つ下まで揃った札です。「戻す」で 1 枚ずつ取り消せます。</p>
-        <p>進行はブラウザーに保存し、準備完了後はオフラインで開き直せます。保存データやキャッシュの削除で失われます。</p>
+        <p>盤面外・Escape・2 本指でドラッグ中止。Tab で札や枠へ移動、Enter / Space で選択・移動、Escape で選択解除。2 本指で拡縮（全画面中は制限あり）。</p>
+        <p>Ctrl-Z で戻す、Ctrl-Y でやり直す（Mac は ⌘ でも可）。</p>
+        <p>「自動」は安全な札をホームへ送ります。チェック時は初手を手動で動かすと、以後の操作後に適用。「戻す」で 1 枚ずつ取り消せます。</p>
+        <p>進行をブラウザーに保存。準備完了後はオフラインでも開けます。データ・キャッシュの削除で失われます。</p>
         <p>ランダムな配りのため、解けない場合もあります。</p>
       </details>
     </main>

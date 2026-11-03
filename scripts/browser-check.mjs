@@ -737,7 +737,7 @@ async function checkLandscapeScroll(page, server, engine, browser, screenshots) 
   console.log('PASS landscape: full-height board, equal card margins, two scroll gutters, reachable menu, no forced scrolling, pinch and portrait restoration');
 }
 
-/** 最大化はブラウザーの表示領域内で行い、タップ・拡大・履歴・元のスクロール位置を守る。 */
+/** ネイティブ全画面と未対応時の最大化を使い分け、解除・履歴・拡大・通信量を守る。 */
 async function checkMaximization(page, server, browser, screenshots) {
   const active = `getComputedStyle(document.querySelector('#board-scroll')).position === 'fixed'`;
   await page.command('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 2 });
@@ -760,17 +760,25 @@ async function checkMaximization(page, server, browser, screenshots) {
   }
 
   /** 実タップから入退出し、要求したモードへ切り替わるまで待つ。 */
-  async function toggle(expected) {
+  async function toggle(expected, native = true) {
     await visibleToggle(expected ? 'before entering' : 'before leaving');
     await touchPoint(page, await inputPoint(page, '#maximize'));
-    await page.waitFor(expected ? active : `!(${active})`, expected ? 'maximized board' : 'normal board');
+    await page.waitFor(`(${expected ? active : `!(${active})`}) && !document.querySelector('#maximize').disabled
+      && Boolean(document.fullscreenElement) === ${expected && native}`, expected ? 'maximized board' : 'normal board');
     assert.equal(await textOf(page, '#maximize'), expected ? '解除' : '最大化');
     assert.equal(await page.evaluate(`document.querySelector('#maximize').getAttribute('aria-pressed')`), String(expected));
   }
 
+  // 実 API を呼ぶ際のオプションも記録し、ブラウザー UI を隠す要求を確認する。
+  await page.evaluate(`window.fullscreenRequests = [];
+    document.documentElement.requestFullscreen = function (options) {
+      window.fullscreenRequests.push(options);
+      return Element.prototype.requestFullscreen.call(this, options);
+    }`);
   await page.click('#auto-enabled');
   await toggle(true);
-  assert.equal(await page.evaluate('Boolean(document.fullscreenElement)'), false, 'Maximum size must keep standard browser pinch available');
+  assert.equal(await page.evaluate('document.fullscreenElement === document.documentElement'), true);
+  assert.deepEqual(await page.evaluate('window.fullscreenRequests'), [{ navigationUI: 'hide' }]);
   assert.equal(await textOf(page, '#moves'), '0');
   assert.equal(await textOf(page, '#time'), '0:00', 'Maximizing must not start an untouched automatic game');
   await checkBoardBounds(page, 'maximized portrait');
@@ -780,6 +788,9 @@ async function checkMaximization(page, server, browser, screenshots) {
   })()`), false, 'The covered menu must not receive keyboard focus');
   await toggle(false);
   await page.click('#auto-enabled');
+  const restoredZoom = await pinch(page, await inputPoint(page, position('tableau', 3, 6)));
+  assert.ok(restoredZoom > 1.2, 'Leaving native fullscreen restores standard browser pinch');
+  await page.command('Emulation.setPageScaleFactor', { pageScaleFactor: 1 });
 
   // 同じ向きでの解除は元の閲覧位置に戻す。メニュー側へ勝手に戻さない。
   await page.evaluate('scrollTo(0, 100)');
@@ -787,6 +798,13 @@ async function checkMaximization(page, server, browser, screenshots) {
   await toggle(true);
   await toggle(false);
   assert.ok(Math.abs(await page.evaluate('scrollY') - originalScroll) <= 1, 'Leaving maximum size restores the original scroll position');
+  await toggle(true);
+  // 戻る操作やブラウザー UI からの解除と同じ fullscreenchange の経路を通す。
+  await page.evaluate('document.exitFullscreen()');
+  await page.waitFor(`!(${active}) && !document.fullscreenElement`, 'browser-initiated fullscreen exit');
+  assert.equal(await textOf(page, '#maximize'), '最大化');
+  assert.equal(await page.evaluate(`document.querySelector('#maximize').getAttribute('aria-pressed')`), 'false');
+  assert.ok(Math.abs(await page.evaluate('scrollY') - originalScroll) <= 1, 'External exit restores the original scroll position');
   await page.evaluate('scrollTo(0, 0)');
   await toggle(true);
   await page.evaluate('window.maximizeNode = document.querySelector("#maximize")');
@@ -807,7 +825,7 @@ async function checkMaximization(page, server, browser, screenshots) {
   const { data } = await page.command('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
   await writeFile(join(screenshots, 'freecell-maximized-landscape.png'), Buffer.from(data, 'base64'));
   await key(page, 'Escape');
-  await page.waitFor(`!(${active})`, 'Escape leaves maximum size');
+  await page.waitFor(`!(${active}) && !document.fullscreenElement && !document.querySelector('#maximize').disabled`, 'Escape leaves maximum size');
   assert.equal(await textOf(page, '#moves'), '1', 'Leaving maximum size keeps the game and history');
   await toggle(true);
   await page.command('Emulation.setTouchEmulationEnabled', { enabled: false });
@@ -816,21 +834,69 @@ async function checkMaximization(page, server, browser, screenshots) {
   await checkBoardBounds(page, 'maximized after growing the viewport');
   await visibleToggle('after changing to a large fine-pointer viewport');
   await pointerClick(page, '#maximize');
-  await page.waitFor(`!(${active})`, 'visible control leaves maximum size on a large screen');
+  await page.waitFor(`!(${active}) && !document.fullscreenElement && !document.querySelector('#maximize').disabled`, 'visible control leaves maximum size on a large screen');
   assert.equal(browser.network.slice(networkStart).filter(url => new URL(url).pathname !== `${prefix}sw.js`).length, 0,
     'Maximum size, orientation changes and history controls must not fetch assets');
 
   await page.command('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 2 });
   await page.command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await loadFixture(page, orderedGame(), server.url);
+  const fallbackNetworkStart = browser.network.length;
+  // 要求の成功後だけ Promise の完了を遅らせ、連打が入退出を重ねないことを確認する。
+  await page.evaluate(`window.fullscreenCalls = 0;
+    document.documentElement.requestFullscreen = function (options) {
+      window.fullscreenCalls++;
+      return Element.prototype.requestFullscreen.call(this, options)
+        .then(() => new Promise(resolve => { window.finishFullscreen = resolve; }));
+    }`);
+  await touchPoint(page, await inputPoint(page, '#maximize'));
+  await page.waitFor(`document.fullscreenElement && typeof window.finishFullscreen === 'function'`, 'delayed fullscreen entry');
+  assert.equal(await page.evaluate(`document.querySelector('#maximize').disabled`), true);
+  await page.evaluate(`document.querySelector('#maximize').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    document.querySelector('#maximize').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+  assert.equal(await page.evaluate('window.fullscreenCalls'), 1, 'Repeated clicks must not overlap a pending fullscreen request');
+  assert.equal(await page.evaluate('document.fullscreenElement === document.documentElement'), true);
+  await page.evaluate('window.finishFullscreen(); delete document.documentElement.requestFullscreen');
+  await page.waitFor(`!document.querySelector('#maximize').disabled`, 'fullscreen request finishes');
+
+  // 解除を拒否されても表示状態を先に戻さず、次の操作で再試行できる。
+  await page.evaluate(`window.fullscreenExitCalls = 0;
+    document.exitFullscreen = () => {
+      window.fullscreenExitCalls++;
+      return Promise.reject(new Error('Test fullscreen exit denial'));
+    }`);
+  await touchPoint(page, await inputPoint(page, '#maximize'));
+  await page.waitFor(`window.fullscreenExitCalls === 1 && !document.querySelector('#maximize').disabled`, 'rejected fullscreen exit');
+  assert.equal(await page.evaluate(active), true);
+  assert.equal(await page.evaluate('document.fullscreenElement === document.documentElement'), true);
+  assert.equal(await textOf(page, '#maximize'), '解除');
+  await page.evaluate('delete document.exitFullscreen');
+  await toggle(false);
+
+  // 開始拒否なら表示領域内の最大化で遊べる。未処理の Promise 拒否を発生させない。
+  await page.evaluate(`window.fullscreenCalls = 0;
+    document.documentElement.requestFullscreen = () => {
+      window.fullscreenCalls++;
+      return Promise.reject(new Error('Test fullscreen entry denial'));
+    }`);
+  await toggle(true, false);
+  assert.equal(await page.evaluate('window.fullscreenCalls'), 1);
+  await checkBoardBounds(page, 'maximum size after native rejection');
+  await toggle(false, false);
+  await page.evaluate('delete document.documentElement.requestFullscreen');
+  assert.equal(await textOf(page, '#moves'), '0', 'Fullscreen failures and repeated input must not move cards');
+  assert.equal(browser.network.slice(fallbackNetworkStart).filter(url => new URL(url).pathname !== `${prefix}sw.js`).length, 0);
+
+  // 未対応ブラウザーの経路では従来の標準ピンチと可視領域内の解除ボタンを保つ。
+  await page.evaluate(`Object.defineProperty(document, 'fullscreenEnabled', { configurable: true, value: false })`);
   const zoomNetworkStart = browser.network.length;
-  await toggle(true);
+  await toggle(true, false);
   const height = await page.evaluate(`document.querySelector('#board').style.getPropertyValue('--card-height')`);
   const expanded = await pinch(page, await inputPoint(page, position('tableau', 3, 6)));
-  assert.ok(expanded > 1.2, `Maximum size preserves native pinch: actual scale ${expanded}`);
+  assert.ok(expanded > 1.2, `Fallback maximum size preserves native pinch: actual scale ${expanded}`);
   assert.equal(await page.evaluate(`document.querySelector('#board').style.getPropertyValue('--card-height')`), height);
   await visibleToggle('while zoomed');
-  await toggle(false);
+  await toggle(false, false);
   assert.ok(Math.abs(await page.evaluate('visualViewport.scale') - expanded) < .01, 'Leaving maximum size preserves the chosen zoom');
   assert.equal(await textOf(page, '#moves'), '0', 'Pinch and maximum-size controls must not move any card');
   assert.equal(browser.network.slice(zoomNetworkStart).filter(url => new URL(url).pathname !== `${prefix}sw.js`).length, 0);
@@ -839,7 +905,7 @@ async function checkMaximization(page, server, browser, screenshots) {
   await page.navigate(server.url);
   assert.equal(await page.evaluate(`Boolean(document.querySelector('#maximize').getClientRects().length)`), false,
     'The maximize control is hidden in the normal desktop layout');
-  console.log('PASS maximum size: mobile tap, viewport coverage, no automatic start, scroll restore, drag/history, orientation/Escape/large-screen exit, pinch and zoomed exit');
+  console.log('PASS maximum size: native fullscreen with hidden navigation, button/browser/Escape exit, no automatic start, scroll restore, drag/history, orientation, request races/denials, unsupported fallback pinch and zoomed exit');
 }
 
 /** 二度押しでホームを優先し、移動できない単札だけをフリーセルへ送ることを検証する。 */

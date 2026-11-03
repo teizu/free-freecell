@@ -77,18 +77,39 @@ function fitBoard() {
   boardElement.style.setProperty('--card-step', `${step}px`);
 }
 
-/** 進行を変えず表示だけ切り替える。解除後は元のスクロール位置とボタンへ戻す。 */
-function toggleMaximize() {
+/** 進行を変えず表示を同期する。全画面の通知が重なっても元の閲覧位置を保つ。 */
+function setMaximized(next) {
   cancelAutomatic();
   cancelDrag();
-  if (!maximized) previousScroll = scrollY;
-  maximized = !maximized;
+  if (next && !maximized) previousScroll = scrollY;
+  maximized = next;
   document.body.classList.toggle('maximized', maximized);
   maximize.textContent = maximized ? '解除' : '最大化';
   maximize.setAttribute('aria-pressed', String(maximized));
   fitBoard();
   if (!maximized) scrollTo(0, previousScroll);
   maximize.focus({ preventScroll: true });
+}
+
+/** 実入力から全画面を要求する。非対応・拒否時はページ内の最大化を使う。 */
+async function toggleMaximize() {
+  if (maximize.disabled) return;
+  maximize.disabled = true;
+  try {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+    } else {
+      setMaximized(!maximized);
+      if (maximized && document.fullscreenEnabled) {
+        await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+      }
+    }
+  } catch {
+    // 入場拒否ならページ内表示を維持する。退出拒否でも解除ボタンから再試行できる。
+  } finally {
+    maximize.disabled = false;
+    maximize.focus({ preventScroll: true });
+  }
 }
 
 /** 停止や保存の直前に、表示中に経過した単調増加の時間を状態へ反映する。 */
@@ -442,6 +463,8 @@ window.addEventListener('resize', () => { cancelAutomatic(); fitBoard(); });
 window.visualViewport?.addEventListener('resize', fitBoard);
 window.visualViewport?.addEventListener('scroll', fitBoard);
 maximize.addEventListener('click', toggleMaximize);
+// 戻る・Escape・ブラウザー側の操作で全画面が終了した場合も通常表示へ戻す。
+document.addEventListener('fullscreenchange', () => setMaximized(Boolean(document.fullscreenElement)));
 find('new-game').addEventListener('click', () => replaceGame(false));
 find('win-new').addEventListener('click', () => replaceGame(false));
 find('restart').addEventListener('click', () => replaceGame(true));
