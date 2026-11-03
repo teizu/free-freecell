@@ -2,7 +2,7 @@
  * FreeCell の画面と操作。ルールは game.js、保存は storage.js に任せる。
  * DOM はゲーム状態から描画し、時計と案内だけを個別に更新する。
  */
-import { SUITS, rank, cardLabel, createGame, getBoard, move, undo, redo, restart, isWon } from './game.js';
+import { SUITS, rank, cardLabel, createGame, getBoard, move, quickMove, autoHome, undo, redo, restart, isWon } from './game.js';
 import { loadGame, saveGame } from './storage.js';
 import { setupOffline } from './offline.js';
 
@@ -15,10 +15,39 @@ let game = restored.game ?? createGame();
 let selected = null;
 let runningSince = null;
 let replacementPending = false;
+let lastCardClick = null;
+let pointerType = '';
+let settingError = '';
+try {
+  find('auto-enabled').checked = localStorage.getItem(`${storageKey}:auto-home`) === '1';
+} catch {
+  settingError = '自動移動の設定を保存できません。この画面では操作できます。';
+}
 
 /** 文言は HTML として解釈せず、日本語のまま読み上げ領域へ渡す。 */
 function announce(message) {
   find('message').textContent = message;
+  fitBoard();
+}
+
+/** 小画面では列の枚数と表示可能な高さから縮め、盤面全体を見渡せるようにする。 */
+function fitBoard() {
+  if (!matchMedia('(max-width: 800px), (max-height: 500px)').matches) {
+    boardElement.removeAttribute('style');
+    return;
+  }
+  // ピンチによる拡大は利用者に任せ、拡大中に縮小し直さない。
+  if (window.visualViewport && visualViewport.scale !== 1) return;
+  const card = boardElement.querySelector('button');
+  if (!card) return;
+  const available = Math.max(80, (window.visualViewport?.height ?? innerHeight) - boardElement.getBoundingClientRect().top - scrollY - 8);
+  const steps = Math.max(1, ...getBoard(game).tableau.map((pile) => pile.length - 1));
+  // 固定高 43px は上下余白 16px・見出し 17px・行間 10px。段差は可能なら 14px 以上を保つ。
+  const height = Math.max(20, Math.min(card.clientWidth * 1.4, (available - 43 - steps * 14) / 2));
+  const step = Math.max(1, Math.min(26, (available - 43 - height * 2) / steps));
+  boardElement.style.setProperty('--card-height', `${height}px`);
+  boardElement.style.setProperty('--card-step', `${step}px`);
+  boardElement.style.setProperty('--card-label-size', `${Math.min(11, Math.max(6, step - 3))}px`);
 }
 
 /** 停止や保存の直前に、表示中に経過した単調増加の時間を状態へ反映する。 */
@@ -47,9 +76,23 @@ function refreshClock() {
 /** 保存できない場合もメモリー上のゲームを継続し、専用の案内を残す。 */
 function persist() {
   settleTime();
-  const error = saveGame(storageKey, game);
+  const error = saveGame(storageKey, game) ?? settingError;
   find('storage-status').hidden = !error;
   find('storage-status').textContent = error ?? '';
+}
+
+/** 選択だけなら DOM を置き換えず、同じカードへの連続クリックを維持する。 */
+function markSelection(button) {
+  const { zone, index, offset } = button.dataset;
+  const active = selected?.zone === zone && selected.index === Number(index)
+    && (zone !== 'tableau' || Number(offset) >= selected.offset);
+  button.setAttribute('aria-pressed', String(Boolean(active)));
+  button.setAttribute('aria-label', button.dataset.label + (active ? '、選択中' : ''));
+}
+
+/** 選択範囲と読み上げ名だけを更新し、フォーカスとカードの位置を保つ。 */
+function updateSelection() {
+  boardElement.querySelectorAll('[data-card]').forEach(markSelection);
 }
 
 /** カードと空き枠に共通の位置情報を付け、マウスとキーボードの操作をそろえる。 */
@@ -69,11 +112,9 @@ function cardButton(card, zone, index, offset) {
   const button = positionButton(zone, index, offset);
   button.className = `card ${suit.color}`;
   button.dataset.card = card;
-  const inSelection = selected?.zone === zone && selected.index === index
-    && (zone !== 'tableau' || offset >= selected.offset);
-  button.setAttribute('aria-pressed', String(inSelection));
   const place = zone === 'tableau' ? `場札 ${index + 1}` : zone === 'cells' ? `フリーセル ${index + 1}` : 'ホームセル';
-  button.setAttribute('aria-label', `${place}、${cardLabel(card)}${inSelection ? '、選択中' : ''}`);
+  button.dataset.label = `${place}、${cardLabel(card)}`;
+  markSelection(button);
   const corner = document.createElement('span');
   corner.className = 'card-corner';
   corner.textContent = `${value} ${suit.symbol}\uFE0E`;
@@ -116,6 +157,7 @@ function topGroup(board, zone, title) {
 
 /** 盤面を状態から作り直す。フォーカスがあったカードは移動後も追いかける。 */
 function render() {
+  lastCardClick = null;
   const active = document.activeElement;
   const focused = boardElement.contains(active) ? active.dataset : null;
   const focusCard = focused?.card;
@@ -142,6 +184,7 @@ function render() {
   find('undo').disabled = game.cursor === 0;
   find('redo').disabled = game.cursor + 1 === game.history.length;
   find('win-panel').hidden = !isWon(board);
+  fitBoard();
   refreshClock();
   if (focusPosition) {
     const sameCard = focusCard === undefined ? null : boardElement.querySelector(`[data-card="${focusCard}"]`);
@@ -158,8 +201,21 @@ function render() {
 function clearSelection() {
   if (!selected) return;
   selected = null;
-  render();
+  updateSelection();
   announce('選択を解除しました。');
+}
+
+/** 操作後の自動移動を通常の履歴に積み、表示・保存を一度だけ更新する。 */
+function finishMove(message, automatic = find('auto-enabled').checked) {
+  if (automatic) {
+    const result = autoHome(game);
+    game = result.game;
+    if (result.count) message = `${result.count} 枚を自動でホームセルへ送りました。`;
+  }
+  selected = null;
+  render();
+  persist();
+  announce(isWon(getBoard(game)) ? 'クリア！ すべてのカードが揃いました。' : message);
 }
 
 /** クリック・タップ・Enter/Space は、同じボタンの click から処理する。 */
@@ -171,6 +227,22 @@ function choosePosition(event) {
   }
   const position = { zone: button.dataset.zone, index: Number(button.dataset.index) };
   if (button.dataset.offset !== undefined) position.offset = Number(button.dataset.offset);
+  const card = button.dataset.card;
+  const now = performance.now();
+  const repeated = card !== undefined && lastCardClick?.card === card && event.detail > 0
+    && (event.detail > 1 || (pointerType === 'touch' && now - lastCardClick.time < 400));
+  lastCardClick = event.detail > 0 && card !== undefined ? { card, time: now } : null;
+  if (repeated) {
+    lastCardClick = null;
+    settleTime();
+    const result = quickMove(game, position);
+    if (result.error) announce(result.error);
+    else {
+      game = result.game;
+      finishMove('移動しました。');
+    }
+    return;
+  }
   if (selected && selected.zone === position.zone && selected.index === position.index && selected.offset === position.offset) {
     clearSelection();
     return;
@@ -186,7 +258,7 @@ function choosePosition(event) {
     }
     selected = position;
     const count = position.zone === 'tableau' ? getBoard(game).tableau[position.index].length - position.offset : 1;
-    render();
+    updateSelection();
     announce(`${cardLabel(Number(button.dataset.card))}${count > 1 ? `から ${count} 枚` : ''}を選択しました。移動先を選んでください。`);
     return;
   }
@@ -197,10 +269,7 @@ function choosePosition(event) {
     return;
   }
   game = result.game;
-  selected = null;
-  render();
-  persist();
-  announce(isWon(getBoard(game)) ? 'クリア！ すべてのカードが揃いました。' : '移動しました。次のカードを選んでください。');
+  finishMove('移動しました。次のカードを選んでください。');
 }
 
 /** 進行中のゲームを置き換える場合だけ、キャンセル可能な確認を表示する。 */
@@ -226,10 +295,7 @@ async function replaceGame(restarting) {
     if (!await confirmReplacement(restarting)) return;
     runningSince = null;
     game = restarting ? restart(game) : createGame();
-    selected = null;
-    render();
-    persist();
-    announce(restarting ? '同じ配りで最初から始めました。' : '新しいゲームを始めました。');
+    finishMove(restarting ? '同じ配りで最初から始めました。' : '新しいゲームを始めました。');
   } finally {
     replacementPending = false;
   }
@@ -239,20 +305,41 @@ async function replaceGame(restarting) {
 function changeHistory(operation, message) {
   settleTime();
   game = operation(game);
-  selected = null;
-  render();
-  persist();
-  announce(isWon(getBoard(game)) ? 'クリア！ すべてのカードが揃いました。' : message);
+  // 戻した札を即座に送り直さず、保存からの復元と同様に履歴位置を尊重する。
+  finishMove(message, false);
 }
 
+document.addEventListener('pointerdown', (event) => {
+  pointerType = event.pointerType;
+  if (!event.target.closest('#board [data-card]')) lastCardClick = null;
+});
 boardElement.addEventListener('click', choosePosition);
+find('auto-home').addEventListener('click', () => {
+  settleTime();
+  finishMove('安全に送れるカードはありません。', true);
+});
+find('auto-enabled').addEventListener('change', () => {
+  try {
+    localStorage.setItem(`${storageKey}:auto-home`, find('auto-enabled').checked ? '1' : '0');
+    settingError = '';
+  } catch {
+    settingError = '自動移動の設定を保存できません。この画面では操作できます。';
+  }
+  settleTime();
+  finishMove(find('auto-enabled').checked ? '自動移動をオンにしました。' : '自動移動をオフにしました。');
+});
+window.addEventListener('resize', fitBoard);
+window.visualViewport?.addEventListener('resize', fitBoard);
 find('new-game').addEventListener('click', () => replaceGame(false));
 find('win-new').addEventListener('click', () => replaceGame(false));
 find('restart').addEventListener('click', () => replaceGame(true));
 find('undo').addEventListener('click', () => changeHistory(undo, '1 手戻しました。'));
 find('redo').addEventListener('click', () => changeHistory(redo, '1 手やり直しました。'));
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && !dialog.open) clearSelection();
+  if (event.key === 'Escape' && !dialog.open) {
+    lastCardClick = null;
+    clearSelection();
+  }
 });
 document.addEventListener('click', (event) => {
   if (!event.target.closest('button, summary, dialog, #board')) clearSelection();

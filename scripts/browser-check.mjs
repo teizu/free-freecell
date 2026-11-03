@@ -19,6 +19,7 @@ const urlArgument = process.argv.indexOf('--url');
 const externalUrl = urlArgument === -1 ? null : new URL(process.argv[urlArgument + 1]).href;
 const prefix = externalUrl ? new URL('./', externalUrl).pathname : '/free-freecell/';
 const storageKey = `freecell:${prefix}:v1`;
+const autoStorageKey = `${storageKey}:auto-home`;
 const pause = (ms) => new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 
 /** 公開フォルダだけをサブパスで配信し、実ネットワークの要求数とバイト数を記録する。 */
@@ -201,13 +202,14 @@ async function loadSavedValue(page, value, url) {
 
 /** デスクトップと狭い画面の表示、文字コード、表示文字列を検証する。 */
 async function checkLayout(page, screenshotDirectory) {
-  for (const width of [320, 768, 1280]) {
-    await page.command('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: false });
+  for (const [width, height] of [[320, 568], [390, 844], [844, 390], [768, 900], [1280, 900]]) {
+    await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 900 });
     await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
     const state = await page.evaluate(`({
       width: innerWidth, clientWidth: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth,
       charset: document.characterSet, lang: document.documentElement.lang,
-      cards: document.querySelectorAll('[data-card]').length,
+      cards: document.querySelectorAll('[data-card]').length, title: document.title,
+      heading: document.querySelector('h1').textContent,
       brokenText: document.body.textContent.includes('\uFFFD'),
       toolbar: [...document.querySelectorAll('.toolbar button')].map(button => {
         const rect = button.getBoundingClientRect();
@@ -221,9 +223,44 @@ async function checkLayout(page, screenshotDirectory) {
     assert.equal(state.charset, 'UTF-8');
     assert.equal(state.lang, 'ja');
     assert.equal(state.brokenText, false);
-    await capturePage(page, join(screenshotDirectory, `freecell-${width}.png`));
-    console.log(`PASS layout: ${width}px, UTF-8 Japanese, no page overflow`);
+    assert.equal(state.heading, 'Free-FreeCell');
+    assert.match(state.title, /^Free-FreeCell(?:\s|$)/);
+    if (width < 900) await checkBoardBounds(page, `${width}x${height}`);
+    await capturePage(page, join(screenshotDirectory, `freecell-${width}x${height}.png`));
+    console.log(`PASS layout: ${width}x${height}, Free-FreeCell title, UTF-8 Japanese, no page overflow`);
   }
+}
+
+/** 横スクロールやページ移動なしで、全ての列と末尾カードまで画面内にあることを確かめる。 */
+async function checkBoardBounds(page, label) {
+  const bounds = await page.evaluate(`(() => {
+    const board = document.querySelector('#board').getBoundingClientRect();
+    const scroll = document.querySelector('#board-scroll');
+    const cards = [...document.querySelectorAll('[data-card]')].map(card => card.getBoundingClientRect());
+    const clippedLabels = [...document.querySelectorAll('.top-slots button, .column > button:last-child')].flatMap(button => {
+      const card = button.getBoundingClientRect();
+      const labels = button.children.length ? [...button.children] : [button];
+      return labels.flatMap(label => {
+        const range = document.createRange();
+        range.selectNodeContents(label);
+        const text = range.getBoundingClientRect();
+        return text.left < card.left - 1 || text.right > card.right + 1 || text.top < card.top - 1 || text.bottom > card.bottom + 1
+          ? [{ card: button.dataset.card ?? button.dataset.zone, text: label.textContent,
+            top: text.top, bottom: text.bottom, cardTop: card.top, cardBottom: card.bottom }] : [];
+      });
+    });
+    return { left: board.left, right: board.right, top: board.top, bottom: board.bottom,
+      cardBottom: Math.max(...cards.map(card => card.bottom)),
+      width: document.documentElement.clientWidth, height: innerHeight,
+      scrollWidth: scroll.scrollWidth, clientWidth: scroll.clientWidth, x: scrollX, y: scrollY, clippedLabels };
+  })()`);
+  assert.ok(bounds.left >= 0 && bounds.right <= bounds.width + 1, `Board width ${label}: ${JSON.stringify(bounds)}`);
+  assert.ok(bounds.top >= 0 && bounds.bottom <= bounds.height + 1 && bounds.cardBottom <= bounds.height + 1,
+    `Board height ${label}: ${JSON.stringify(bounds)}`);
+  assert.ok(bounds.scrollWidth <= bounds.clientWidth + 1, `Board horizontal scrolling ${label}: ${JSON.stringify(bounds)}`);
+  assert.equal(bounds.x, 0, `Horizontal page scroll ${label}`);
+  assert.equal(bounds.y, 0, `Vertical page scroll ${label}`);
+  assert.deepEqual(bounds.clippedLabels, [], `Visible labels must fit their cards ${label}`);
 }
 
 /** viewport の反映を待ち、スクロールバーを含めた表示幅でページ全体を撮影する。 */
@@ -253,6 +290,136 @@ async function key(page, keyName) {
 /** 盤面の位置から、カードまたは空枠の操作用セレクターを作る。 */
 function position(zone, index, offset) {
   return `[data-zone="${zone}"][data-index="${index}"]${offset === undefined ? '' : `[data-offset="${offset}"]`}`;
+}
+
+/** DOM イベントの直接 dispatch に頼らず、一度の実タップをブラウザーへ送る。 */
+async function touchPoint(page, point) {
+  await page.command('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+  await page.command('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+}
+
+/** 実際の描画位置へ入力を送り、DOM 差し替えによる二度押しの取りこぼしも検出する。 */
+async function doublePointer(page, selector, touch = false, exposedEdge = false) {
+  const point = await page.evaluate(`(() => {
+    const rect = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + ${exposedEdge ? '4' : 'rect.height / 2'} };
+  })()`);
+  for (let count = 1; count <= 2; count += 1) {
+    if (touch) {
+      await touchPoint(page, point);
+    } else {
+      await page.command('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: count });
+      await page.command('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: count });
+    }
+    await pause(80);
+  }
+}
+
+/** 二度押しでホームを優先し、移動できない単札だけをフリーセルへ送ることを検証する。 */
+async function checkQuickMove(page, server) {
+  await loadFixture(page, orderedGame(), server.url);
+  await doublePointer(page, position('tableau', 0, 6));
+  assert.equal(await textOf(page, '#moves'), '1');
+  assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('foundations', 0))}).dataset.card`), '0');
+  assert.equal(await page.evaluate(`document.querySelectorAll('[data-zone="cells"][data-card]').length`), 0);
+
+  await loadFixture(page, orderedGame(), server.url);
+  await doublePointer(page, position('tableau', 4, 5));
+  assert.equal(await textOf(page, '#moves'), '1');
+  assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('cells', 0))}).dataset.card`), '1');
+  await doublePointer(page, position('cells', 0));
+  assert.equal(await textOf(page, '#moves'), '1', 'A cell card must stay put while its home is blocked');
+  await doublePointer(page, position('tableau', 0, 6));
+  await doublePointer(page, position('cells', 0));
+  assert.equal(await textOf(page, '#moves'), '3');
+  assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('foundations', 0))}).dataset.card`), '1');
+  // 手動の指定は安全判定を課さず、合法なら 3 以上でもホームへ送れる。
+  await doublePointer(page, position('tableau', 0, 5));
+  assert.equal(await textOf(page, '#moves'), '4');
+  assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('foundations', 0))}).dataset.card`), '2');
+
+  await loadFixture(page, orderedGame(), server.url);
+  await doublePointer(page, position('tableau', 0, 5), false, true);
+  assert.equal(await textOf(page, '#moves'), '0', 'A buried card must not move by double-click');
+  await key(page, 'Escape');
+  for (let index = 0; index < 4; index += 1) {
+    await page.click(position('tableau', index + 4, 5));
+    await page.click(position('cells', index));
+  }
+  await doublePointer(page, position('tableau', 0, 6));
+  assert.equal(await textOf(page, '#moves'), '5', 'Home takes priority even when all free cells are occupied');
+  await doublePointer(page, position('tableau', 0, 5));
+  assert.equal(await textOf(page, '#moves'), '5', 'No empty free cell must leave an unplayable card in place');
+  console.log('PASS double-click: native input, home priority, free-cell fallback, buried/full/blocked refusal');
+}
+
+/** 各列の末尾を指定し、残りのカードを埋めた合法な初期配札を作る。 */
+function gameWithTails(tails) {
+  const reserved = new Set(tails.flat());
+  const remaining = Array.from({ length: 52 }, (_, card) => card).filter(card => !reserved.has(card));
+  const tableau = tails.map((tail, index) => remaining.splice(0, (index < 4 ? 7 : 6) - tail.length).concat(tail));
+  return { version: 1, history: [{ tableau, cells: Array(4).fill(null), foundations: Array.from({ length: 4 }, () => []) }], cursor: 0, elapsedMs: 0, started: false };
+}
+
+/** 安全な自動移動、チェック設定の保存、履歴操作時の自動移動抑止を確かめる。 */
+async function checkAutomaticHome(page, server, engine, browser) {
+  assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), false, 'Automatic home starts disabled');
+  await loadFixture(page, orderedGame(), server.url);
+  const requestStart = browser.network.length;
+  await page.click('#auto-home');
+  assert.equal(await textOf(page, '#moves'), '52');
+  assert.equal(await textOf(page, '#progress'), '52');
+  await page.click('#undo');
+  assert.equal(await textOf(page, '#moves'), '51', 'An automatic move is one undo step');
+  await page.click('#redo');
+  assert.equal(await textOf(page, '#moves'), '52');
+  assert.equal(browser.network.slice(requestStart).filter(url => new URL(url).pathname !== `${prefix}sw.js`).length, 0);
+
+  // スペードの 3 は合法でも、赤の 2 が未完了なのでボタンでは動かさない。
+  let unsafe = gameWithTails([[2, 1, 0], [6], [19], [32], [45], [7], [20], [33]]);
+  for (const offset of [6, 5]) {
+    const result = engine.move(unsafe, { zone: 'tableau', index: 0, offset }, { zone: 'foundations', index: 0 });
+    assert.equal(result.error, null);
+    unsafe = result.game;
+  }
+  assert.equal(engine.validateGame(unsafe), true);
+  await loadFixture(page, unsafe, server.url);
+  await page.click('#auto-home');
+  assert.equal(await textOf(page, '#moves'), '2');
+  assert.equal(await textOf(page, '#progress'), '2');
+
+  const reveal = gameWithTails([[11, 0, 19], [6], [32], [45], [7], [20], [33], [46]]);
+  assert.equal(engine.validateGame(reveal), true);
+  await loadFixture(page, reveal, server.url);
+  await page.click('#auto-enabled');
+  assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
+  assert.equal(await page.evaluate(`localStorage.getItem(${JSON.stringify(autoStorageKey)})`), '1');
+  assert.equal(await textOf(page, '#moves'), '0');
+  await page.click(position('tableau', 0, 6));
+  await page.click(position('cells', 0));
+  assert.equal(await textOf(page, '#moves'), '2', 'A successful move triggers the newly exposed safe card');
+  assert.equal(await textOf(page, '#progress'), '1');
+  await page.click('#undo');
+  assert.equal(await textOf(page, '#moves'), '1');
+  assert.equal(await textOf(page, '#progress'), '0', 'Undo must not immediately resend the card');
+  await page.navigate(server.url);
+  assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
+  assert.equal(await textOf(page, '#moves'), '1', 'Restoring a saved game must not resend the card');
+  await page.click('#redo');
+  assert.equal(await textOf(page, '#moves'), '2');
+  await page.click('#undo');
+  await page.click('#undo');
+  await page.click('#redo');
+  assert.equal(await textOf(page, '#moves'), '1', 'Redo must stop before the separate automatic history step');
+  assert.equal(await textOf(page, '#progress'), '0');
+  await page.click('#auto-enabled');
+  await page.click('#auto-enabled');
+  assert.equal(await textOf(page, '#moves'), '2', 'Enabling the checkbox immediately sends safe cards');
+  await page.click('#auto-enabled');
+  await page.navigate(server.url);
+  assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), false);
+  assert.equal(await page.evaluate(`localStorage.getItem(${JSON.stringify(autoStorageKey)})`), '0');
+  console.log('PASS automatic home: safe cards only, immediate checkbox action, after-move action, settings restore, independent undo/redo');
 }
 
 /** 選択・拒否・履歴・再配札を操作し、ゲーム中に通信が増えないことも確認する。 */
@@ -433,6 +600,9 @@ async function checkStorage(page, server) {
     await page.click(position('cells', 0));
     assert.equal(await textOf(page, '#moves'), '1');
     assert.ok((await textOf(page, '#storage-status')).length > 0);
+    await page.click('#auto-enabled');
+    assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
+    assert.equal(await textOf(page, '#moves'), '53', 'Automatic home still works when saving its setting fails');
   } finally {
     await page.command('Page.removeScriptToEvaluateOnNewDocument', { identifier });
     await page.navigate(server.url);
@@ -440,7 +610,7 @@ async function checkStorage(page, server) {
   console.log('PASS storage: corrupt JSON and denied writes keep the game playable');
 }
 
-/** 元の 7/6 枚の配りから 12 手で長い列を組み、画面外のカードへの到達を検証する。 */
+/** 元の 7/6 枚の配りから 12 手で長い列を組み、縮小表示の厳しい条件を作る。 */
 function longColumnGame(engine) {
   const tail = Array.from({ length: 12 }, (_, index) => {
     const rank = 12 - index;
@@ -465,21 +635,50 @@ function longColumnGame(engine) {
   return game;
 }
 
-/** タッチイベントを実際のカード位置へ送り、狭い画面で長い列を操作する。 */
+/** 長い列も画面内に収め、実タッチの単押しと二度押しでカードを操作する。 */
 async function checkTouchAndLongColumn(page, server, engine, screenshots) {
-  await page.command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await page.command('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
-  await loadFixture(page, longColumnGame(engine), server.url);
-  const last = position('tableau', 0, 18);
-  await page.evaluate(`document.querySelector(${JSON.stringify(last)}).scrollIntoView({ block: 'center', inline: 'nearest' })`);
-  const bounds = await page.evaluate(`(() => { const rect = document.querySelector(${JSON.stringify(last)}).getBoundingClientRect(); return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }; })()`);
-  await page.command('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [bounds] });
-  await page.command('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-  await page.waitFor(`document.querySelector(${JSON.stringify(last)}).getAttribute('aria-pressed') === 'true'`, 'touch selection');
-  await capturePage(page, join(screenshots, 'freecell-long-column.png'));
+  for (const [width, height] of [[320, 568], [390, 844], [844, 390]]) {
+    await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true });
+    await loadFixture(page, longColumnGame(engine), server.url);
+    await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
+    await checkBoardBounds(page, `19-card column ${width}x${height}`);
+    const last = position('tableau', 0, 18);
+    const bounds = await page.evaluate(`(() => { const rect = document.querySelector(${JSON.stringify(last)}).getBoundingClientRect(); return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }; })()`);
+    await touchPoint(page, bounds);
+    await page.waitFor(`document.querySelector(${JSON.stringify(last)}).getAttribute('aria-pressed') === 'true'`, 'touch selection');
+    await checkBoardBounds(page, `selected 19-card column ${width}x${height}`);
+    await capturePage(page, join(screenshots, `freecell-long-${width}x${height}.png`));
+  }
+  await page.command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  // 背景や Escape を挟んだ操作は、400ms 以内でも別々の単押しとして扱う。
+  for (const cancellation of ['background', 'Escape']) {
+    await loadFixture(page, orderedGame(), server.url);
+    const points = await page.evaluate(`(() => {
+      const card = document.querySelector(${JSON.stringify(position('tableau', 0, 6))}).getBoundingClientRect();
+      const board = document.querySelector('#board').getBoundingClientRect();
+      return { card: { x: card.left + card.width / 2, y: card.top + card.height / 2 },
+        background: { x: board.left + 1, y: board.top + 1 } };
+    })()`);
+    await touchPoint(page, points.card);
+    if (cancellation === 'background') await touchPoint(page, points.background);
+    else await key(page, 'Escape');
+    assert.equal(await page.evaluate(`document.querySelectorAll('[aria-pressed="true"]').length`), 0);
+    await touchPoint(page, points.card);
+    assert.equal(await textOf(page, '#moves'), '0', `${cancellation} must cancel the double-tap sequence`);
+    assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('tableau', 0, 6))}).getAttribute('aria-pressed')`), 'true', `${cancellation} should allow a fresh selection`);
+  }
+  await loadFixture(page, orderedGame(), server.url);
+  await doublePointer(page, position('tableau', 0, 6), true);
+  assert.equal(await textOf(page, '#moves'), '1');
+  assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('foundations', 0))}).dataset.card`), '0');
+  await loadFixture(page, orderedGame(), server.url);
+  await doublePointer(page, position('tableau', 4, 5), true);
+  assert.equal(await textOf(page, '#moves'), '1');
+  assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('cells', 0))}).dataset.card`), '1');
   await page.command('Emulation.setTouchEmulationEnabled', { enabled: false });
   await page.command('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
-  console.log('PASS touch: mobile emulation, 19-card column remains reachable');
+  console.log('PASS touch: 19-card column fits all three mobile viewports; native double-tap prefers home and falls back to free cell');
 }
 
 /** 新版を一時配信し、旧版の対局を保持したまま更新が待機することを確認する。 */
@@ -537,16 +736,23 @@ async function main() {
     else assert.equal(await page.evaluate('Boolean(navigator.serviceWorker.controller)'), true);
     await checkLayout(page, temp);
     await checkControls(page, server, browser);
+    await checkQuickMove(page, server);
+    await checkAutomaticHome(page, server, engine, browser);
     await checkGroupMove(page, server, engine);
     await checkWin(page, server, engine);
     await checkStorage(page, server);
     await checkTouchAndLongColumn(page, server, engine, temp);
-    await loadFixture(page, orderedGame(), server.url);
+    // 自動設定をオンのまま一手戻して保存し、再起動が盤面を勝手に進めないことも確かめる。
+    await loadFixture(page, gameWithTails([[11, 0, 19], [6], [32], [45], [7], [20], [33], [46]]), server.url);
+    await page.click('#auto-enabled');
     await page.click(position('tableau', 0, 6));
     await page.click(position('cells', 0));
+    assert.equal(await textOf(page, '#moves'), '2');
+    await page.click('#undo');
     await page.navigate(server.url);
     assert.equal(await textOf(page, '#moves'), '1');
-    assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('cells', 0))}).dataset.card`), '0');
+    assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('cells', 0))}).dataset.card`), '19');
+    assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
     assert.equal(browser.errors.length, 0, JSON.stringify(browser.errors));
     if (!externalUrl) {
       const update = await prepareUpdate(page, server, temp);
@@ -557,6 +763,7 @@ async function main() {
       assert.notEqual(await page.evaluate(`document.querySelector('link[rel="stylesheet"]').href`), update.oldStylesheet);
       await page.waitFor(`caches.keys().then(names => ${JSON.stringify(update.originalCaches)}.every(name => !names.includes(name)))`, 'old application cache cleanup');
       assert.equal(await textOf(page, '#moves'), '1');
+      assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
       console.log('PASS update activation: new version after browser restart; progress preserved and old application cache removed');
     }
     await browser.close();
@@ -569,10 +776,12 @@ async function main() {
     assert.equal(await page.evaluate('Boolean(navigator.serviceWorker.controller)'), true);
     assert.equal(await page.evaluate(`fetch('./offline-probe', { cache: 'no-store' }).then(() => false, () => true)`), true, 'Offline probe must fail');
     assert.equal(await textOf(page, '#moves'), '1');
+    assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
     await page.click('#undo');
     assert.equal(await textOf(page, '#moves'), '0');
     await page.click('#redo');
     assert.equal(await textOf(page, '#moves'), '1');
+    await page.click('#auto-enabled');
     await page.click('#new-game');
     await page.click('#confirm-accept');
     await page.waitFor(`document.querySelector('#moves').textContent === '0'`, 'offline new-game confirmation');

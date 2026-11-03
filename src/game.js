@@ -115,6 +115,44 @@ export function move(game, from, to) {
   };
 }
 
+/** 露出した 1 枚をホーム優先で移す。手動指定なので自動移動の安全条件は課さない。 */
+export function quickMove(game, from) {
+  const fail = (error) => ({ game, error });
+  if (!validLocation(from) || from.zone === 'foundations') return fail('場札かフリーセルのカードを選んでください。');
+  const board = getBoard(game);
+  const pile = from.zone === 'tableau' ? board.tableau[from.index] : null;
+  if (pile && (!pile.length || from.offset !== pile.length - 1)) return fail('列の最後のカードだけを移動できます。');
+  const card = pile ? pile.at(-1) : board.cells[from.index];
+  if (card === null) return fail('空のフリーセルからは移動できません。');
+  const home = move(game, from, { zone: 'foundations', index: suit(card) });
+  if (!home.error) return home;
+  if (from.zone === 'cells') return fail('このカードはまだホームセルへ移動できません。');
+  const index = board.cells.indexOf(null);
+  return index < 0 ? fail('空いているフリーセルがありません。') : move(game, from, { zone: 'cells', index });
+}
+
+/** 後の場札の組み替えを妨げない札だけを、1 枚ずつ履歴へ残してホームに送る。 */
+export function autoHome(game) {
+  let count = 0;
+  while (true) {
+    const board = getBoard(game);
+    const source = piles(board).find(({ zone, cards }) => {
+      if (zone === 'foundations' || !cards.length) return false;
+      const card = cards.at(-1);
+      const value = rank(card);
+      if (board.foundations[suit(card)].length + 1 !== value) return false;
+      // A・2、または反対色の両スートが 1 段下まで片付いた札は、場札の足場に不要。
+      return value <= 2 || SUITS.every((other, index) => other.color === SUITS[suit(card)].color
+        || board.foundations[index].length >= value - 1);
+    });
+    if (!source) return { game, count };
+    game = move(game, { ...source, offset: source.cards.length - 1 }, {
+      zone: 'foundations', index: suit(source.cards.at(-1)),
+    }).game;
+    count += 1;
+  }
+}
+
 /** 時計は巻き戻さず、現在の履歴位置だけを 1 手戻す。 */
 export function undo(game) {
   return game.cursor > 0 ? { ...game, cursor: game.cursor - 1 } : game;
@@ -143,7 +181,7 @@ function validBoard(board) {
     && pile.every((card, index) => card === suitIndex * 13 + index));
 }
 
-/** 履歴の比較用に、フリーセルも通常のカード配列へそろえる。 */
+/** 履歴比較と移動候補の列挙用に、フリーセルも通常のカード配列へそろえる。 */
 function piles(board) {
   return [
     ...board.tableau.map((cards, index) => ({ zone: 'tableau', index, cards })),
