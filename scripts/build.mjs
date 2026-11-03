@@ -1,6 +1,7 @@
 /** 静的ビルド。ソースの可読性を保ち、配布物だけを最小化して容量を検証する。 */
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { transformSync } from 'esbuild';
@@ -8,17 +9,42 @@ import { checkSize } from './size.mjs';
 
 const digest = (content) => createHash('sha256').update(content).digest('hex');
 
-/** 空白・コメントと JS の内部識別子を削減し、公開名と日本語・文字列の意味を維持する。 */
+/** 構文・空白と JS の内部識別子を縮め、公開名と日本語・文字列の意味を維持する。 */
 function compact(content, extension) {
   if (!['.js', '.css'].includes(extension)) return content;
   return transformSync(content, {
     loader: extension.slice(1),
+    minifySyntax: true,
     minifyWhitespace: true,
     // export 名やプロパティ名は保ち、配布 JS 内部の名前だけを短縮する。
     minifyIdentifiers: extension === '.js',
     charset: 'utf8',
     legalComments: 'none',
   }).code;
+}
+
+/** アプリの最終変更日を日本時間で固定し、再ビルドや閲覧だけでは日付を進めない。 */
+async function updateDate(source, files) {
+  let epoch = process.env.SOURCE_DATE_EPOCH;
+  if (epoch === undefined) {
+    try {
+      // 文書だけの変更を除き、コピーした src の検証でも同じ履歴を参照する。
+      epoch = execFileSync('git', ['log', '-1', '--format=%ct', '--', 'src', 'scripts/build.mjs', 'package.json', 'package-lock.json'], {
+        cwd: fileURLToPath(new URL('..', import.meta.url)),
+        encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim() || undefined;
+    } catch {
+      // Git を含まないソース配布では、保存されたファイルの更新日時を用いる。
+    }
+  }
+  if (epoch !== undefined && !/^\d+$/.test(epoch)) throw new Error('SOURCE_DATE_EPOCH は UNIX 秒の非負整数で指定してください。');
+  const milliseconds = epoch === undefined
+    ? Math.max(...await Promise.all([...files].map(async (file) => (await stat(resolve(source, file))).mtimeMs)))
+    : Number(epoch) * 1000;
+  // 日本時間は通年 UTC+9。実行環境のタイムゾーンに依存させない。
+  const date = new Date(milliseconds + 9 * 60 * 60 * 1000);
+  if (Number.isNaN(date.getTime())) throw new Error('更新日を有効な日時に変換できません。');
+  return date.toISOString().slice(0, 10);
 }
 
 /** 静的な相対参照だけを扱い、循環依存や解決不能な参照は明示的に拒否する。 */
@@ -65,7 +91,8 @@ export async function build(source, destination) {
     const extension = extname(file);
     let content = inputs.get(file);
     if (['.js', '.css', '.html'].includes(extension)) {
-      const rewritten = rewriteReferences(content.toString('utf8').replaceAll('__FREECELL_BUILD__', 'published'), file);
+      const rewritten = rewriteReferences(content.toString('utf8')
+        .replaceAll('__FREECELL_BUILD__', 'published').replaceAll('__FREECELL_DATE__', date), file);
       content = Buffer.from(compact(rewritten, extension));
     }
     const hashed = ['.js', '.css', '.woff2', '.txt'].includes(extension);
@@ -78,6 +105,7 @@ export async function build(source, destination) {
 
   await collect();
   if (!inputs.has('index.html') || !inputs.has('sw.js')) throw new Error('index.html と sw.js が必要です。');
+  const date = await updateDate(source, inputs.keys());
   for (const file of inputs.keys()) if (file !== 'sw.js') compile(file);
   const assets = [...outputs].sort(([left], [right]) => left.localeCompare(right)).map(([name, content]) => [name, digest(content)]);
   const template = inputs.get('sw.js').toString('utf8');

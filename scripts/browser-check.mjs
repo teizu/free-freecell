@@ -20,6 +20,7 @@ const externalUrl = urlArgument === -1 ? null : new URL(process.argv[urlArgument
 const prefix = externalUrl ? new URL('./', externalUrl).pathname : '/free-freecell/';
 const storageKey = `freecell:${prefix}:v1`;
 const autoStorageKey = `${storageKey}:auto-home`;
+const soundStorageKey = `${storageKey}:sound`;
 const pause = (ms) => new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 
 /** 公開フォルダだけをサブパスで配信し、実ネットワークの要求数とバイト数を記録する。 */
@@ -274,6 +275,8 @@ async function checkLayout(page, screenshotDirectory) {
       charset: document.characterSet, lang: document.documentElement.lang,
       cards: document.querySelectorAll('[data-card]').length, title: document.title,
       heading: document.querySelector('h1').textContent,
+      version: document.querySelector('#version').textContent,
+      restart: document.querySelector('#restart').textContent,
       brokenText: document.body.textContent.includes('\uFFFD'),
       toolbar: [...document.querySelectorAll('.toolbar button')].map(button => {
         const rect = button.getBoundingClientRect();
@@ -288,6 +291,8 @@ async function checkLayout(page, screenshotDirectory) {
     assert.equal(state.lang, 'ja');
     assert.equal(state.brokenText, false);
     assert.equal(state.heading, 'Free-FreeCell');
+    assert.match(state.version, /^ver-\d{4}-\d{2}-\d{2}$/);
+    assert.equal(state.restart, '最初からやり直す');
     assert.match(state.title, /^Free-FreeCell(?:\s|$)/);
     await capturePage(page, join(screenshotDirectory, `freecell-${width}x${height}.png`));
     await checkBoardBounds(page, `${width}x${height}`);
@@ -371,12 +376,14 @@ async function textOf(page, selector) {
 }
 
 /** ネイティブのキーイベントを送り、通常のキーボード操作を再現する。 */
-async function key(page, keyName) {
+async function key(page, keyName, modifiers = 0) {
   const enter = keyName === 'Enter';
-  const code = enter ? 13 : keyName === 'Escape' ? 27 : keyName === 'Tab' ? 9 : 32;
-  const physical = keyName === ' ' ? 'Space' : keyName;
-  await page.command('Input.dispatchKeyEvent', { type: 'keyDown', key: keyName, code: physical, windowsVirtualKeyCode: code, ...(enter ? { text: '\r', unmodifiedText: '\r' } : {}) });
-  await page.command('Input.dispatchKeyEvent', { type: 'keyUp', key: keyName, code: physical, windowsVirtualKeyCode: code });
+  const letter = /^[a-z]$/i.test(keyName);
+  const code = letter ? keyName.toUpperCase().charCodeAt(0) : enter ? 13 : keyName === 'Escape' ? 27 : keyName === 'Tab' ? 9 : 32;
+  const physical = letter ? `Key${keyName.toUpperCase()}` : keyName === ' ' ? 'Space' : keyName;
+  const event = { key: keyName, code: physical, windowsVirtualKeyCode: code, modifiers };
+  await page.command('Input.dispatchKeyEvent', { type: 'keyDown', ...event, ...(enter ? { text: '\r', unmodifiedText: '\r' } : {}) });
+  await page.command('Input.dispatchKeyEvent', { type: 'keyUp', ...event });
 }
 
 /** 盤面の位置から、カードまたは空枠の操作用セレクターを作る。 */
@@ -388,6 +395,13 @@ function position(zone, index, offset) {
 async function touchPoint(page, point) {
   await page.command('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
   await page.command('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+}
+
+/** 実クリックのユーザー操作として、音声の初回再生許可も含めて検証する。 */
+async function pointerClick(page, selector) {
+  const point = await inputPoint(page, selector);
+  await page.command('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', buttons: 1, clickCount: 1 });
+  await page.command('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', buttons: 0, clickCount: 1 });
 }
 
 /** CDP のタッチ座標は可視 viewport 基準なので、ピンチ後のオフセットを差し引く。 */
@@ -460,7 +474,7 @@ async function checkDragAndDrop(page, server, engine, browser) {
     await dragPointer(page, position('tableau', 0, 6), position('cells', 0), { touch });
     assert.equal(await textOf(page, '#moves'), '1', `${label}: a drop is one move`);
     assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('cells', 0))}).dataset.card`), '0');
-    assert.equal(await page.evaluate(`document.querySelectorAll('[aria-pressed="true"]').length`), 0, `${label}: the generated click must not select again`);
+    assert.equal(await page.evaluate(`document.querySelectorAll('#board [aria-pressed="true"]').length`), 0, `${label}: the generated click must not select again`);
     await page.click('#undo');
     assert.equal(await textOf(page, '#moves'), '0');
     await page.click('#redo');
@@ -619,12 +633,12 @@ async function checkPinchZoom(page, server, browser) {
   const scale = await pinch(page, first, true, true);
   assert.ok(scale > 1.2, `Pinch begun during drag must enlarge the page, actual ${scale}`);
   assert.equal(await textOf(page, '#moves'), '0');
-  assert.equal(await page.evaluate(`document.querySelectorAll('[aria-pressed="true"], .dragging').length`), 0);
+  assert.equal(await page.evaluate(`document.querySelectorAll('#board [aria-pressed="true"], .dragging').length`), 0);
   // 拡大された画面内で見えている列を使い、指を全て離した後の新しい操作を確認する。
   await dragPointer(page, card, position('cells', 3), { touch: true });
   assert.equal(await textOf(page, '#moves'), '1', 'One-finger drag must still work while zoomed');
   assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('cells', 3))}).dataset.card`), '39');
-  assert.equal(await page.evaluate(`document.querySelectorAll('[aria-pressed="true"], .dragging').length`), 0);
+  assert.equal(await page.evaluate(`document.querySelectorAll('#board [aria-pressed="true"], .dragging').length`), 0);
   assert.ok(Math.abs(await page.evaluate('visualViewport.scale') - scale) < 0.01, 'Dragging must preserve the chosen zoom');
   await page.click('#undo');
   assert.equal(await textOf(page, '#moves'), '0');
@@ -701,7 +715,7 @@ async function checkAutomaticHome(page, server, engine, browser) {
   assert.equal(await textOf(page, '#moves'), '52');
   assert.equal(browser.network.slice(requestStart).filter(url => new URL(url).pathname !== `${prefix}sw.js`).length, 0);
 
-  // スペードの 3 は合法でも、赤の 2 が未完了なのでボタンでは動かさない。
+  // スペードの 3 は合法でも、赤の A が未完了なのでボタンでは動かさない。
   let unsafe = gameWithTails([[2, 1, 0], [6], [19], [32], [45], [7], [20], [33]]);
   for (const offset of [6, 5]) {
     const result = engine.move(unsafe, { zone: 'tableau', index: 0, offset }, { zone: 'foundations', index: 0 });
@@ -713,6 +727,18 @@ async function checkAutomaticHome(page, server, engine, browser) {
   await page.click('#auto-home');
   assert.equal(await textOf(page, '#moves'), '2');
   assert.equal(await textOf(page, '#progress'), '2');
+
+  // 赤を 3 で止めた局でも、両黒の 5 まで安全に送り切れることを表示から確認する。
+  const twoRanksAhead = gameWithTails([
+    [4, 3, 2, 1, 0], [25, 15, 14, 13], [38, 28, 27, 26], [43, 42, 41, 40, 39],
+    [10], [23], [36], [49],
+  ]);
+  assert.equal(engine.validateGame(twoRanksAhead), true);
+  await loadFixture(page, twoRanksAhead, server.url);
+  await page.click('#auto-home');
+  await waitAutomatic(page, 16);
+  assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('[data-zone="foundations"][data-card]')].map(card => Number(card.dataset.card))`),
+    [4, 15, 28, 43], 'Both black foundations reach 5 while both red foundations remain at 3');
 
   const reveal = gameWithTails([[11, 0, 19], [6], [32], [45], [7], [20], [33], [46]]);
   assert.equal(engine.validateGame(reveal), true);
@@ -861,7 +887,7 @@ async function checkControls(page, server, browser) {
   await key(page, 'Enter');
   assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(top)}).getAttribute('aria-pressed')`), 'true');
   await key(page, 'Escape');
-  assert.equal(await page.evaluate(`document.querySelectorAll('[aria-pressed="true"]').length`), 0);
+  assert.equal(await page.evaluate(`document.querySelectorAll('#board [aria-pressed="true"]').length`), 0);
   await page.evaluate(`document.querySelector(${JSON.stringify(top)}).focus()`);
   await key(page, ' ');
   assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(top)}).getAttribute('aria-pressed')`), 'true');
@@ -876,7 +902,7 @@ async function checkControls(page, server, browser) {
   await page.click(position('cells', 0));
   assert.equal(await textOf(page, '#moves'), '1');
   assert.ok((await textOf(page, '#message')).length > 0);
-  assert.equal(await page.evaluate(`document.querySelectorAll('[aria-pressed="true"]').length`), 1);
+  assert.equal(await page.evaluate(`document.querySelectorAll('#board [aria-pressed="true"]').length`), 1);
   await key(page, 'Escape');
   await page.evaluate(`document.querySelector('#undo').focus()`);
   await page.click('#undo');
@@ -934,6 +960,177 @@ async function checkControls(page, server, browser) {
   console.log('PASS controls: keyboard, illegal move, undo/redo branching, restart/new confirmation, timer, zero gameplay requests');
 }
 
+/** 実キー入力で履歴を動かし、編集・変換・確認中の入力を奪わないことを確かめる。 */
+async function checkHistoryShortcuts(page, server) {
+  await loadFixture(page, orderedGame(), server.url);
+  await page.click(position('tableau', 0, 6));
+  await page.click(position('cells', 0));
+  await key(page, 'z', 2);
+  assert.equal(await textOf(page, '#moves'), '0', 'Ctrl-Z undoes one move');
+  await key(page, 'z', 2);
+  assert.equal(await textOf(page, '#moves'), '0', 'Ctrl-Z at the first position is harmless');
+  await key(page, 'y', 2);
+  assert.equal(await textOf(page, '#moves'), '1', 'Ctrl-Y redoes one move');
+  await key(page, 'y', 2);
+  assert.equal(await textOf(page, '#moves'), '1', 'Ctrl-Y at the last position is harmless');
+  await key(page, 'z', 4);
+  assert.equal(await textOf(page, '#moves'), '0', 'Command-Z also undoes one move');
+  await key(page, 'y', 4);
+  assert.equal(await textOf(page, '#moves'), '1', 'Command-Y also redoes one move');
+  await key(page, 'z', 3);
+  assert.equal(await textOf(page, '#moves'), '1', 'Ctrl-Alt-Z must not be treated as Undo');
+  await key(page, 'z', 10);
+  assert.equal(await textOf(page, '#moves'), '1', 'Ctrl-Shift-Z must not be treated as Undo');
+
+  for (const tag of ['input', 'textarea', 'select', 'div']) {
+    await page.evaluate(`(() => {
+      const input = document.createElement(${JSON.stringify(tag)});
+      input.id = 'shortcut-editable';
+      if (input.tagName === 'DIV') input.contentEditable = 'true';
+      document.body.append(input);
+      input.focus();
+    })()`);
+    await key(page, 'z', 2);
+    assert.equal(await textOf(page, '#moves'), '1', `${tag}: Ctrl-Z is left to the editor`);
+    await page.evaluate(`document.querySelector('#shortcut-editable').remove()`);
+  }
+  const composing = await page.evaluate(`(() => {
+    const event = new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, isComposing: true, bubbles: true, cancelable: true });
+    document.body.dispatchEvent(event);
+    return { prevented: event.defaultPrevented, moves: document.querySelector('#moves').textContent };
+  })()`);
+  assert.deepEqual(composing, { prevented: false, moves: '1' }, 'IME composition must not be consumed by the history shortcut');
+  await page.click('#restart');
+  await key(page, 'z', 2);
+  assert.equal(await textOf(page, '#moves'), '1', 'A confirmation dialog blocks board history shortcuts');
+  await page.click('#confirm-cancel');
+  await page.evaluate(`document.querySelector('#auto-enabled').focus()`);
+  await key(page, 'z', 2);
+  assert.equal(await textOf(page, '#moves'), '0', 'Focusing the automatic checkbox must not block Undo');
+  await key(page, 'y', 2);
+  assert.equal(await textOf(page, '#moves'), '1', 'Shortcuts recover after closing the dialog');
+  console.log('PASS history shortcuts: native Ctrl-Z/Ctrl-Y, history bounds, Alt/input/textarea/select/contenteditable/IME/dialog guards');
+}
+
+/** ネイティブ Web Audio の生成と波形を計測し、控えめな音・許可・消音・保存を確認する。 */
+async function checkSound(page, server, browser) {
+  const { identifier } = await page.command('Page.addScriptToEvaluateOnNewDocument', {
+    source: `(() => {
+      const audit = window.soundAudit = { contexts: [], tones: [] };
+      const NativeAudioContext = window.AudioContext;
+      window.AudioContext = class extends NativeAudioContext {
+        constructor(...args) { super(...args); audit.contexts.push(this); }
+        createGain() {
+          const node = super.createGain();
+          node.soundAutomation = [];
+          for (const method of ['setValueAtTime', 'linearRampToValueAtTime']) {
+            const original = node.gain[method].bind(node.gain);
+            node.gain[method] = (value, time) => { node.soundAutomation.push({ method, value, time }); return original(value, time); };
+          }
+          return node;
+        }
+        createOscillator() {
+          const node = super.createOscillator();
+          const record = { frequencies: [], stops: [] };
+          audit.tones.push(record);
+          for (const method of ['setValueAtTime', 'linearRampToValueAtTime']) {
+            const original = node.frequency[method].bind(node.frequency);
+            node.frequency[method] = (value, time) => { record.frequencies.push({ method, value, time }); return original(value, time); };
+          }
+          const connect = node.connect.bind(node);
+          node.connect = target => { record.gain = target.soundAutomation; return connect(target); };
+          const start = node.start.bind(node);
+          node.start = time => { record.start = time; record.type = node.type; return start(time); };
+          const stop = node.stop.bind(node);
+          node.stop = time => { record.stops.push(time ?? this.currentTime); return stop(time); };
+          return node;
+        }
+      };
+    })()`,
+  });
+  try {
+    await loadFixture(page, orderedGame(), server.url);
+    assert.equal(await textOf(page, '#sound-toggle'), '音声オフ', 'Sound is on by default and the button names the action');
+    assert.equal(await page.evaluate('soundAudit.contexts.length'), 0, 'Loading a page does not create an audio context');
+    await page.click(position('tableau', 0, 6));
+    assert.equal(await page.evaluate('soundAudit.contexts.length'), 0, 'Synthetic clicks do not request playback permission');
+    await page.evaluate(`document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+    const requestStart = browser.network.length;
+    await pointerClick(page, 'h1');
+    await page.waitFor(`soundAudit.contexts[0]?.state === 'running'`, 'audio context unlocked by user input');
+    await pointerClick(page, position('tableau', 0, 6));
+    await pointerClick(page, position('cells', 0));
+    assert.equal(await textOf(page, '#moves'), '1');
+    await pointerClick(page, position('cells', 0));
+    await pointerClick(page, position('foundations', 0));
+    assert.equal(await textOf(page, '#moves'), '2');
+    const tones = await page.evaluate('soundAudit.tones');
+    const click = tones.find(tone => tone.frequencies[0]?.value === 600);
+    const home = tones.find(tone => tone.frequencies[0]?.value === 900);
+    assert.ok(click && home, 'Clicks and placing a card home produce distinct native oscillator tones');
+    for (const [tone, peak, duration] of [[click, .01, .025], [home, .015, .065]]) {
+      assert.equal(tone.type, 'sine');
+      assert.equal(Math.max(...tone.gain.map(event => event.value)), peak);
+      assert.equal(tone.gain[0].value, 0);
+      assert.equal(tone.gain.at(-1).value, 0);
+      assert.ok(Math.abs(tone.stops[0] - tone.start - duration) < 1e-6);
+    }
+    assert.equal(home.frequencies.at(-1).value, 1200);
+    // 観測した実際の包絡線をオフライン音声エンジンにも通し、デジタル波形の振幅上限を確認する。
+    const peaks = await page.evaluate(`Promise.all(${JSON.stringify([click, home])}.map(async tone => {
+      const duration = tone.stops[0] - tone.start;
+      const context = new OfflineAudioContext(1, Math.ceil(duration * 48000), 48000);
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = tone.type;
+      for (const event of tone.frequencies) oscillator.frequency[event.method](event.value, Math.max(0, event.time - tone.start));
+      for (const event of tone.gain) gain.gain[event.method](event.value, Math.max(0, event.time - tone.start));
+      oscillator.connect(gain).connect(context.destination);
+      oscillator.start(0); oscillator.stop(duration);
+      const buffer = await context.startRendering();
+      return Math.max(...buffer.getChannelData(0).map(Math.abs));
+    }))`);
+    assert.ok(peaks[0] > .005 && peaks[0] <= .01001);
+    assert.ok(peaks[1] > .01 && peaks[1] <= .01501);
+
+    await pointerClick(page, '#sound-toggle');
+    assert.equal(await textOf(page, '#sound-toggle'), '音声オン');
+    assert.equal(await page.evaluate(`localStorage.getItem(${JSON.stringify(soundStorageKey)})`), '0');
+    const mutedCount = await page.evaluate('soundAudit.tones.length');
+    await pointerClick(page, '#undo');
+    assert.equal(await page.evaluate('soundAudit.tones.length'), mutedCount, 'Muted controls do not create sound nodes');
+    assert.equal(browser.network.slice(requestStart).filter(url => new URL(url).pathname !== `${prefix}sw.js`).length, 0, 'Sound synthesis does not fetch assets');
+    await page.navigate(server.url);
+    assert.equal(await textOf(page, '#sound-toggle'), '音声オン');
+    await pointerClick(page, '#redo');
+    assert.equal(await page.evaluate('soundAudit.contexts.length'), 0, 'The saved mute setting prevents context creation');
+    await pointerClick(page, '#sound-toggle');
+    await page.waitFor(`soundAudit.contexts[0]?.state === 'running'`, 'sound re-enabled by real click');
+    assert.equal(await textOf(page, '#sound-toggle'), '音声オフ');
+    assert.equal(await page.evaluate(`localStorage.getItem(${JSON.stringify(soundStorageKey)})`), '1');
+    await page.evaluate(`window.soundOriginalSetItem = Storage.prototype.setItem; Storage.prototype.setItem = function(key, value) {
+      if (key === ${JSON.stringify(soundStorageKey)}) throw new DOMException('Sound setting denied', 'QuotaExceededError');
+      return soundOriginalSetItem.call(this, key, value);
+    }`);
+    await pointerClick(page, '#sound-toggle');
+    assert.equal(await textOf(page, '#sound-toggle'), '音声オン', 'Muting remains usable when saving is denied');
+  } finally {
+    await page.command('Page.removeScriptToEvaluateOnNewDocument', { identifier });
+    await page.navigate(server.url);
+  }
+  const unsupported = await page.command('Page.addScriptToEvaluateOnNewDocument', { source: 'window.AudioContext = undefined' });
+  try {
+    await loadFixture(page, orderedGame(), server.url);
+    await pointerClick(page, position('tableau', 0, 6));
+    await pointerClick(page, position('cells', 0));
+    assert.equal(await textOf(page, '#moves'), '1', 'Unavailable audio never blocks card movement');
+  } finally {
+    await page.command('Page.removeScriptToEvaluateOnNewDocument', { identifier: unsupported.identifier });
+    await page.navigate(server.url);
+  }
+  console.log('PASS sound: real AudioContext permission, 25/65 ms quiet waveforms, distinct home tone, no audio fetch, mute persistence, denied storage/unsupported audio');
+}
+
 /** 別の実タブへ切り替え、非表示中は時計が止まり、復帰後に再開することを確認する。 */
 async function checkHiddenClock(page, browser) {
   const background = await browser.page();
@@ -961,7 +1158,7 @@ async function checkGroupMove(page, server, engine) {
   assert.equal(engine.validateGame(game), true);
   await loadFixture(page, game, server.url);
   await page.click(position('tableau', 0, 5));
-  assert.equal(await page.evaluate(`document.querySelectorAll('[aria-pressed="true"]').length`), 2);
+  assert.equal(await page.evaluate(`document.querySelectorAll('#board [aria-pressed="true"]').length`), 2);
   await page.click(position('tableau', 1, 6));
   assert.equal(await textOf(page, '#moves'), '1');
   assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('tableau', 1, 7))}).dataset.card`), '19');
@@ -1013,6 +1210,106 @@ async function checkWin(page, server, engine) {
   assert.equal(await page.evaluate(`document.querySelector('#confirm-dialog').open`), false);
   assert.equal(await page.evaluate(`document.activeElement.tagName === 'BUTTON' && !document.activeElement.closest('[hidden]')`), true);
   console.log('PASS victory: completion, stopped clock, undo/redo, new deal');
+}
+
+/** 実際のタイマーと Web Animations を観測し、4 枚の独立性・上下限・中止を確かめる。 */
+async function checkVictoryEffects(page, server, engine, browser) {
+  await loadFixture(page, nearWinGame(engine), server.url);
+  await page.evaluate(`(() => {
+    const audit = window.winAudit = { timers: [], pending: new Map(), animations: [], maximum: 0 };
+    const timeout = window.setTimeout;
+    const clear = window.clearTimeout;
+    const animate = Element.prototype.animate;
+    window.originalRandom = Math.random;
+    Math.random = () => 0;
+    window.setTimeout = function (callback, delay, ...args) {
+      const record = { delay, at: performance.now() };
+      const id = timeout(() => {
+        audit.pending.delete(id);
+        callback(...args);
+      }, delay);
+      if (delay >= 1000 && delay <= 15000) {
+        audit.timers.push(record);
+        audit.pending.set(id, record);
+      }
+      return id;
+    };
+    window.clearTimeout = function (id) { audit.pending.delete(id); clear(id); };
+    Element.prototype.animate = function (frames, options) {
+      const animation = animate.call(this, frames, options);
+      if (JSON.stringify(frames).includes('rotateY')) {
+        audit.animations.push({ card: this.dataset.card, frames, duration: options.duration, at: performance.now(), animation });
+        audit.maximum = Math.max(audit.maximum, audit.animations.filter(item => item.animation.playState === 'running').length);
+      }
+      return animation;
+    };
+  })()`);
+  const last = await page.evaluate(`document.querySelector('[data-zone="tableau"][data-card]').dataset.card`);
+  await page.click(`[data-card="${last}"]`);
+  await page.click(position('foundations', 3));
+  await page.waitFor('winAudit.animations.length === 4', 'four simultaneous king rotations');
+  const first = await page.evaluate(`({ delays: winAudit.timers.slice(0, 4).map(item => item.delay),
+    cards: winAudit.animations.map(item => Number(item.card)), durations: winAudit.animations.map(item => item.duration),
+    transforms: winAudit.animations[0].frames.map(frame => frame.transform), maximum: winAudit.maximum })`);
+  assert.deepEqual(first.delays, [1000, 1000, 1000, 1000]);
+  assert.deepEqual(first.cards, [12, 25, 38, 51]);
+  assert.deepEqual(first.durations, [100, 100, 100, 100]);
+  assert.deepEqual(first.transforms, ['rotateY(0deg)', 'rotateY(360deg)']);
+  assert.equal(first.maximum, 4, 'All four kings may rotate concurrently');
+  await page.click('#undo');
+  assert.equal(await page.evaluate('winAudit.pending.size'), 0);
+  assert.equal(await page.evaluate(`winAudit.animations.filter(item => item.animation.playState === 'running').length`), 0);
+
+  // 最長の回転でも、次の開始は回転終了からではなく前の開始から約 1 秒後になる。
+  await page.evaluate(`winAudit.timers = []; winAudit.animations = []; window.randomCalls = 0;
+    Math.random = () => { const call = randomCalls++; return call < 4 || (call - 4) % 2 ? 0 : 1 - Number.EPSILON; }`);
+  await page.click('#redo');
+  await page.waitFor('winAudit.animations.length >= 8', 'second independently scheduled king rotations');
+  const intervals = await page.evaluate(`winAudit.animations.slice(0, 4).map(first => {
+    const second = winAudit.animations.find(item => item.card === first.card && item !== first);
+    return { duration: first.duration, interval: second.at - first.at };
+  })`);
+  assert.ok(intervals.every(item => item.duration >= 499 && item.duration <= 500));
+  assert.ok(intervals.every(item => item.interval >= 900 && item.interval <= 1200),
+    `A 500 ms rotation must still start every 1 second: ${JSON.stringify(intervals)}`);
+  await page.click('#undo');
+
+  // 最初の待機は 1 秒、回転から後は最大値近くにして、15 秒を実際に待たず上下限を検証する。
+  await page.evaluate(`winAudit.timers = []; winAudit.animations = []; window.randomCalls = 0; Math.random = () => randomCalls++ < 4 ? 0 : 1 - Number.EPSILON`);
+  await page.click('#redo');
+  await page.waitFor('winAudit.animations.length === 4 && winAudit.timers.length === 8', 'maximum speed and independently rescheduled waits');
+  const maximum = await page.evaluate(`({ durations: winAudit.animations.map(item => item.duration), delays: winAudit.timers.slice(4).map(item => item.delay) })`);
+  assert.ok(maximum.durations.every(duration => duration >= 499 && duration <= 500));
+  assert.ok(maximum.delays.every(delay => delay >= 14999 && delay <= 15000));
+  await page.click('#undo');
+
+  // 各札が別々の乱数を使い、全体で一つの頻度にそろえられていないことを確かめる。
+  await page.evaluate(`winAudit.timers = []; window.randomValues = [0, .25, .5, 1 - Number.EPSILON]; Math.random = () => randomValues.shift() ?? .5`);
+  await page.click('#redo');
+  const independent = await page.evaluate('winAudit.timers.map(item => item.delay)');
+  assert.equal(independent.length, 4);
+  assert.equal(new Set(independent).size, 4);
+  assert.ok(independent.every(delay => delay >= 1000 && delay <= 15000));
+
+  await page.command('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+  await page.waitFor('winAudit.pending.size === 0', 'reduced motion cancels all king timers');
+  assert.equal(await page.evaluate('document.getAnimations().length'), 0);
+  await page.command('Emulation.setEmulatedMedia', { features: [] });
+  await page.waitFor('winAudit.pending.size === 4', 'motion preference restoration schedules four kings');
+  const background = await browser.page();
+  try {
+    await background.command('Page.bringToFront');
+    await page.waitFor('document.hidden && winAudit.pending.size === 0', 'hidden victory suspends four kings');
+    await page.command('Page.bringToFront');
+    await page.waitFor('!document.hidden && winAudit.pending.size === 4', 'visible victory resumes four kings');
+  } finally {
+    await background.command('Page.close');
+  }
+  await page.click('#win-new');
+  assert.equal(await page.evaluate('winAudit.pending.size'), 0);
+  assert.equal(await page.evaluate('document.getAnimations().length'), 0);
+  await page.evaluate('Math.random = window.originalRandom');
+  console.log('PASS victory effects: four independent rotateY animations, 100–500 ms, 1–15 s start intervals, overlap, undo/new/reduced-motion/visibility cancellation');
 }
 
 /** 保存データの破損と保存禁止を再現し、盤面が動き続けることを確認する。 */
@@ -1094,7 +1391,7 @@ async function checkTouchAndLongColumn(page, server, engine, screenshots) {
     await touchPoint(page, points.card);
     if (cancellation === 'background') await touchPoint(page, points.background);
     else await key(page, 'Escape');
-    assert.equal(await page.evaluate(`document.querySelectorAll('[aria-pressed="true"]').length`), 0);
+    assert.equal(await page.evaluate(`document.querySelectorAll('#board [aria-pressed="true"]').length`), 0);
     await touchPoint(page, points.card);
     assert.equal(await textOf(page, '#moves'), '0', `${cancellation} must cancel the double-tap sequence`);
     assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('tableau', 0, 6))}).getAttribute('aria-pressed')`), 'true', `${cancellation} should allow a fresh selection`);
@@ -1269,6 +1566,8 @@ async function main() {
     else assert.equal(await page.evaluate('Boolean(navigator.serviceWorker.controller)'), true);
     await checkLayout(page, temp);
     await checkControls(page, server, browser);
+    await checkHistoryShortcuts(page, server);
+    await checkSound(page, server, browser);
     await checkQuickMove(page, server);
     await checkAutomaticHome(page, server, engine, browser);
     await checkAutomaticAnimation(page, server, browser);
@@ -1276,6 +1575,7 @@ async function main() {
     await checkDragAndDrop(page, server, engine, browser);
     await checkPinchZoom(page, server, browser);
     await checkWin(page, server, engine);
+    await checkVictoryEffects(page, server, engine, browser);
     await checkStorage(page, server);
     await checkTouchAndLongColumn(page, server, engine, temp);
     // 自動設定をオンのまま一手戻して保存し、再起動が盤面を勝手に進めないことも確かめる。
@@ -1289,6 +1589,8 @@ async function main() {
     assert.equal(await textOf(page, '#moves'), '1');
     assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('cells', 0))}).dataset.card`), '19');
     assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
+    await page.click('#sound-toggle');
+    assert.equal(await textOf(page, '#sound-toggle'), '音声オン');
     assert.equal(browser.errors.length, 0, JSON.stringify(browser.errors));
     if (!externalUrl) {
       await checkClickUpdate(page, browser, server, temp);
@@ -1304,6 +1606,7 @@ async function main() {
     assert.equal(await page.evaluate(`fetch('./offline-probe', { cache: 'no-store' }).then(() => false, () => true)`), true, 'Offline probe must fail');
     assert.equal(await textOf(page, '#moves'), '1');
     assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
+    assert.equal(await textOf(page, '#sound-toggle'), '音声オン', 'Muted sound survives a complete offline browser restart');
     await checkCardFont(page, browser, server.url, 'offline restart');
     await page.click('#undo');
     assert.equal(await textOf(page, '#moves'), '0');

@@ -45,7 +45,7 @@ button.primary:hover { background: #163f2e; }
 .brand > span { font-size: 2rem; }
 h1 { font-size: 1.35rem; margin: 0; letter-spacing: -.03em; }
 .site-footer { color: #536658; font-size: .8rem; }
-.site-footer a { margin-left: .75rem; color: inherit; }
+.site-footer a, #version { margin-left: .75rem; color: inherit; }
 .toolbar { display: flex; flex-wrap: wrap; gap: .65rem; justify-content: space-between; }
 .actions { display: flex; gap: .5rem; }
 .auto-toggle { display: flex; align-items: center; gap: .35rem; font-size: .875rem; white-space: nowrap; cursor: pointer; }

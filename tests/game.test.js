@@ -17,6 +17,11 @@ function fixture(columns, cells = [null, null, null, null], foundations = [[], [
   return { version: 1, history: [board], cursor: 0, elapsedMs: 0, started: false };
 }
 
+/** 各ホームの到達ランクから、スート別に A から連続するカード配列を作る。 */
+function homeCards(counts) {
+  return counts.map((count, suit) => Array.from({ length: count }, (_, offset) => suit * 13 + offset));
+}
+
 /** 移動後の盤面に 52 枚すべてが残り、元の状態が変更されないことも確認する。 */
 function legal(game, source, target) {
   const original = clone(game);
@@ -162,22 +167,66 @@ test('自動は全スートの A・2 を連続で送り、合法でない札や�
   }
 });
 
-test('3 以上の自動移動には反対色の両スートが 1 段下まで必要', () => {
-  for (const [card, foundations] of [
-    [2, [[0, 1], [13, 14], [26, 27], []]],
-    [15, [[0, 1], [13, 14], [], [39, 40]]],
+test('反対色の両ホームが 3、同色の相方が 2 なら、各スートの 5 まで自動で送る', () => {
+  for (const [card, counts] of [
+    [4, [4, 3, 3, 2]], [17, [3, 4, 2, 3]],
+    [30, [3, 2, 4, 3]], [43, [2, 3, 3, 4]],
   ]) {
-    const opposite = card === 2 ? [1, 2] : [0, 3];
-    for (const suit of opposite) {
-      const unsafe = foundations.map((pile, index) => index === suit ? pile.slice(0, 1) : pile);
-      const game = fixture([[card]], undefined, unsafe);
+    const game = fixture([[card + 1, card]], undefined, homeCards(counts));
+    const original = clone(game);
+    const result = autoHome(game);
+    assert.equal(result.count, 1);
+    assert.equal(getBoard(result.game).foundations[Math.floor(card / 13)].at(-1), card);
+    assert.deepEqual(getBoard(result.game).tableau[0], [card + 1]);
+    assert.deepEqual(game, original);
+
+    // 反対色の片方が 2 なら早すぎる。同色の相方が A でも、残る 3 の足場を守る。
+    for (let suit = 0; suit < 4; suit += 1) {
+      if (suit === Math.floor(card / 13)) continue;
+      const unsafe = counts.map((count, index) => index === suit ? count - 1 : count);
+      const game = fixture([[card]], undefined, homeCards(unsafe));
       assert.deepEqual(autoHome(game), { game, count: 0 });
       assert.equal(autoHome(game).game, game);
     }
-    const result = autoHome(fixture([[card]], undefined, foundations));
+  }
+});
+
+test('反対色が両方 4 なら、同色の相方が未着手でも 5 を自動で送る', () => {
+  for (const [card, counts] of [
+    [4, [4, 4, 4, 0]], [17, [4, 4, 0, 4]],
+    [30, [4, 0, 4, 4]], [43, [0, 4, 4, 4]],
+  ]) {
+    const result = autoHome(fixture([[card]], undefined, homeCards(counts)));
     assert.equal(result.count, 1);
     assert.equal(getBoard(result.game).foundations[Math.floor(card / 13)].at(-1), card);
   }
+});
+
+test('反対色の A が両方済めば 3 を自動で送り、片方が未着手なら残す', () => {
+  for (const [card, counts, opposite] of [
+    [2, [2, 1, 1, 0], [1, 2]], [15, [1, 2, 0, 1], [0, 3]],
+  ]) {
+    assert.equal(autoHome(fixture([[card]], undefined, homeCards(counts))).count, 1);
+    for (const suit of opposite) {
+      const unsafe = counts.map((count, index) => index === suit ? 0 : count);
+      assert.equal(autoHome(fixture([[card]], undefined, homeCards(unsafe))).count, 0);
+    }
+  }
+});
+
+test('ホームが進んだ後に先送りした札を再評価し、対象スート自身の順序も守る', () => {
+  for (const [card, predecessor, counts] of [
+    [4, 28, [4, 3, 2, 2]], [17, 41, [3, 4, 2, 2]],
+  ]) {
+    const game = fixture([[card], [predecessor]], undefined, homeCards(counts));
+    const result = autoHome(game);
+    assert.equal(result.count, 2);
+    assert.deepEqual(result.game.history[1].tableau[0], [card]);
+    assert.deepEqual(result.game.history[1].tableau[1], []);
+    assert.deepEqual(getBoard(result.game).tableau.slice(0, 2), [[], []]);
+  }
+  const gap = fixture([[4]], undefined, homeCards([3, 3, 3, 2]));
+  assert.deepEqual(autoHome(gap), { game: gap, count: 0 });
 });
 
 test('自動はフリーセルも再走査し、1 枚ずつ戻す・やり直すことができる', () => {

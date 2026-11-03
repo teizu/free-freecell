@@ -141,9 +141,7 @@ export function autoHome(game, limit = 52) {
       const card = cards.at(-1);
       const value = rank(card);
       if (board.foundations[suit(card)].length + 1 !== value) return false;
-      // A・2、または反対色の両スートが 1 段下まで片付いた札は、場札の足場に不要。
-      return value <= 2 || SUITS.every((other, index) => other.color === SUITS[suit(card)].color
-        || board.foundations[index].length >= value - 1);
+      return safeHome(board, card);
     });
     if (!source) return { game, count };
     game = move(game, { ...source, offset: source.cards.length - 1 }, {
@@ -152,6 +150,20 @@ export function autoHome(game, limit = 52) {
     count += 1;
   }
   return { game, count };
+}
+
+/**
+ * 場札の足場を失わずに送れるか確認する。A・2、反対色の N-1 が両方済んだ札は安全。
+ * 反対色が N-2 でも、同色の N-3 が済んでいればよい。未達なら残る同色の N-2 を
+ * 逃がすため、反対色の N-1 とその足場である対象札 N が必要になり得る。
+ */
+function safeHome(board, card) {
+  const value = rank(card);
+  const color = SUITS[suit(card)].color;
+  const oppositeReady = (gap) => SUITS.every((other, index) => other.color === color
+    || board.foundations[index].length >= value - gap);
+  return value <= 2 || oppositeReady(1) || (oppositeReady(2)
+    && SUITS.every((other, index) => other.color !== color || board.foundations[index].length >= value - 3));
 }
 
 /** 時計は巻き戻さず、現在の履歴位置だけを 1 手戻す。 */

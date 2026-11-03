@@ -6,6 +6,7 @@ import { SUITS, rank, cardLabel, createGame, getBoard, move, quickMove, autoHome
 import { loadGame, saveGame, saveReload, takeReload } from './storage.js';
 import { setupOffline } from './offline.js';
 import { positionOf, setupDrag } from './drag.js';
+import { setupEffects } from './effects.js';
 
 const find = (id) => document.getElementById(id);
 const boardElement = find('board');
@@ -204,6 +205,7 @@ function render() {
   find('undo').disabled = game.cursor === 0;
   find('redo').disabled = game.cursor + 1 === game.history.length;
   find('win-panel').hidden = !isWon(board);
+  effects.win(isWon(board));
   fitBoard();
   refreshClock();
   if (focusPosition) {
@@ -256,6 +258,7 @@ async function finishMove(message, automatic = find('auto-enabled').checked) {
     count += result.count;
     render();
     persist();
+    effects.home();
     if (animate) {
       const card = boardElement.querySelector(selector);
       const to = card.getBoundingClientRect();
@@ -284,6 +287,7 @@ function tryMove(from, to) {
   if (result.error) announce(result.error);
   else {
     game = result.game;
+    if (to.zone === 'foundations') effects.home();
     finishMove('移動しました。次のカードを選んでください。');
   }
 }
@@ -307,7 +311,9 @@ function choosePosition(event) {
     const result = quickMove(game, position);
     if (result.error) announce(result.error);
     else {
+      const sentHome = getBoard(result.game).foundations.some((pile, index) => pile.length > getBoard(game).foundations[index].length);
       game = result.game;
+      if (sentHome) effects.home();
       finishMove('移動しました。');
     }
     return;
@@ -389,6 +395,7 @@ const cancelDrag = setupDrag(boardElement, {
   drop: tryMove,
   cancel: clearSelection,
 });
+const effects = setupEffects(boardElement, find('sound-toggle'), `${storageKey}:sound`);
 // ドラッグ後の疑似 click を除外した後で、利用者の次の入力を優先して自動移動を止める。
 for (const type of ['pointerdown', 'click', 'keydown']) document.addEventListener(type, cancelAutomatic, true);
 find('auto-home').addEventListener('click', () => {
@@ -413,6 +420,16 @@ find('restart').addEventListener('click', () => replaceGame(true));
 find('undo').addEventListener('click', () => changeHistory(undo, '1 手戻しました。'));
 find('redo').addEventListener('click', () => changeHistory(redo, '1 手やり直しました。'));
 document.addEventListener('keydown', (event) => {
+  // 入力欄の編集や IME・確認ダイアログでは、ブラウザー本来のキー操作を優先する。
+  const editing = event.target.closest('input:not([type=checkbox]), textarea, select') || event.target.isContentEditable;
+  if (!dialog.open && !editing && !event.isComposing && !event.altKey && !event.shiftKey
+    && (event.ctrlKey || event.metaKey)) {
+    const key = event.key.toLowerCase();
+    if (key === 'z' || key === 'y') {
+      event.preventDefault();
+      changeHistory(key === 'z' ? undo : redo, key === 'z' ? '1 手戻しました。' : '1 手やり直しました。');
+    }
+  }
   if (event.key === 'Escape' && !dialog.open) {
     lastCardClick = null;
     clearSelection();

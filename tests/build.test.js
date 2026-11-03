@@ -1,7 +1,7 @@
 /** 配布サイズ、依存を含む URL 更新、キャッシュ更新と失敗時の挙動を検証する。 */
 import assert from 'node:assert/strict';
 import { createHash, webcrypto } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -31,6 +31,19 @@ async function fixture(t) {
   await writeFile(join(source, 'lib/value.js'), 'export const value = "日本語";');
   await writeFile(join(source, 'sw.js'), swTemplate);
   return { source, output };
+}
+
+/** 日付や Git の有無を切り替え、テスト終了時に元の環境へ戻す。 */
+function environment(t, values) {
+  for (const [name, value] of Object.entries(values)) {
+    const previous = process.env[name];
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+    t.after(() => {
+      if (previous === undefined) delete process.env[name];
+      else process.env[name] = previous;
+    });
+  }
 }
 
 test('size budget counts bytes, nested and hidden files; exactly 50,000 is allowed', async (t) => {
@@ -69,6 +82,40 @@ test('build hashes imported dependencies, preserves relative URLs and keeps unch
   assert.notEqual(second.files.find((name) => name.startsWith('main-')), firstMain);
   assert.equal(second.files.find((name) => name.startsWith('styles-')), firstCSS);
   assert.ok(!(await readdir(output)).includes(firstMain), 'old generated files are removed');
+});
+
+test('更新日は指定した UNIX 秒を日本時間で表示し、同じ入力の再ビルドでは変わらない', async (t) => {
+  const { source, output } = await fixture(t);
+  environment(t, { SOURCE_DATE_EPOCH: String(Date.parse('2026-11-02T15:00:00Z') / 1000), TZ: 'UTC' });
+  await writeFile(join(source, 'index.html'), '<p>ver-__FREECELL_DATE__</p>');
+  const first = await build(source, output);
+  assert.equal(await readFile(join(output, 'index.html'), 'utf8'), '<p>ver-2026-11-03</p>');
+  assert.deepEqual(await build(source, output), first);
+
+  process.env.SOURCE_DATE_EPOCH = String(Date.parse('2026-11-02T14:59:59Z') / 1000);
+  const previous = await build(source, output);
+  assert.equal(await readFile(join(output, 'index.html'), 'utf8'), '<p>ver-2026-11-02</p>');
+  assert.notEqual(previous.version, first.version, '日付の変更もキャッシュの版へ反映する');
+  assert.deepEqual(previous.files, first.files, '日付以外のアセット名は変えない');
+});
+
+test('Git がないソース配布ではファイルの最終更新日を使い、不正な指定日時では公開物を残す', async (t) => {
+  const { source, output } = await fixture(t);
+  environment(t, { SOURCE_DATE_EPOCH: undefined, PATH: '' });
+  await writeFile(join(source, 'index.html'), '<p>ver-__FREECELL_DATE__</p>');
+  for (const file of ['index.html', 'styles.css', 'main.js', 'lib/value.js', 'sw.js']) {
+    const time = new Date(file === 'main.js' ? '2026-01-02T15:00:00Z' : '2026-01-01T00:00:00Z');
+    await utimes(join(source, file), time, time);
+  }
+  const result = await build(source, output);
+  assert.equal(await readFile(join(output, 'index.html'), 'utf8'), '<p>ver-2026-01-03</p>');
+  assert.deepEqual(await build(source, output), result);
+  const worker = await readFile(join(output, 'sw.js'), 'utf8');
+  for (const invalid of ['', '-1', '日本語', '1.5', '9'.repeat(30)]) {
+    process.env.SOURCE_DATE_EPOCH = invalid;
+    await assert.rejects(build(source, output), /SOURCE_DATE_EPOCH|更新日/);
+    assert.equal(await readFile(join(output, 'sw.js'), 'utf8'), worker);
+  }
 });
 
 test('フォントのバイナリと外部ライセンスリンクを保ち、変更を CSS・HTML・SW の版へ伝える', async (t) => {
@@ -121,6 +168,12 @@ test('build compacts generated code while preserving Japanese, literals and newl
     '  return',
     '  { text: "この改行は変えない" };',
     '}',
+    'export function conditional(value) {',
+    '  const visits = [];',
+    '  if (value) visits.push("真"); else visits.push("偽");',
+    '  value && visits.push("短絡評価");',
+    '  return { visits, zero: Object.is(value, -0), finite: Number.isFinite(value) };',
+    '}',
   ].join('\n');
   await writeFile(join(source, 'lib/value.js'), original);
   await writeFile(join(source, 'styles.css'), '/* 配布前の説明 */ body::before { content: "日本語  /* 文字 */"; width: calc(100% - 2rem); }');
@@ -128,6 +181,10 @@ test('build compacts generated code while preserving Japanese, literals and newl
   const generatedName = result.files.find(name => name.startsWith('lib/value-'));
   const generated = await readFile(join(output, generatedName), 'utf8');
   const module = await import(`data:text/javascript;base64,${Buffer.from(generated).toString('base64')}`);
+  const sourceModule = await import(`data:text/javascript;base64,${Buffer.from(original).toString('base64')}`);
+  for (const value of [undefined, null, 0, -0, false, true, '', NaN, '日本語']) {
+    assert.deepEqual(module.conditional(value), sourceModule.conditional(value), '構文短縮でも分岐と副作用を保つ');
+  }
   assert.equal(module.value, '日本語\n  字間 と /* 文字列 */\n末尾');
   assert.equal(module.pattern.test('/*日本語*/'), true);
   assert.equal(module.url, 'https://example.test/日本語');
