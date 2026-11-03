@@ -33,22 +33,25 @@ function announce(message) {
 
 /** 小画面では列の枚数と表示可能な高さから縮め、盤面全体を見渡せるようにする。 */
 function fitBoard() {
+  const card = boardElement.querySelector('button');
+  if (!card) return;
   if (!matchMedia('(max-width: 800px), (max-height: 500px)').matches) {
-    boardElement.removeAttribute('style');
+    boardElement.style.setProperty('--card-height', `${Math.min(142, card.clientWidth * 1.33)}px`);
+    boardElement.style.removeProperty('--card-step');
+    boardElement.classList.remove('compact-cards');
     return;
   }
   // ピンチによる拡大は利用者に任せ、拡大中に縮小し直さない。
   if (window.visualViewport && visualViewport.scale !== 1) return;
-  const card = boardElement.querySelector('button');
-  if (!card) return;
   const available = Math.max(80, (window.visualViewport?.height ?? innerHeight) - boardElement.getBoundingClientRect().top - scrollY - 8);
   const steps = Math.max(1, ...getBoard(game).tableau.map((pile) => pile.length - 1));
-  // 固定高 43px は上下余白 16px・見出し 17px・行間 10px。段差は可能なら 14px 以上を保つ。
-  const height = Math.max(20, Math.min(card.clientWidth * 1.4, (available - 43 - steps * 14) / 2));
-  const step = Math.max(1, Math.min(26, (available - 43 - height * 2) / steps));
+  // 固定高 43px を除き、上端のランクと小スートが見える段差（高さの32%+2px）も確保する。
+  const height = Math.max(20, Math.min(card.clientWidth * 1.33, (available - 43 - steps * 2) / (2 + steps * .32)));
+  const step = Math.max(1, Math.min(Math.max(26, height * .32 + 2), (available - 43 - height * 2) / steps));
   boardElement.style.setProperty('--card-height', `${height}px`);
   boardElement.style.setProperty('--card-step', `${step}px`);
   boardElement.style.setProperty('--card-label-size', `${Math.min(11, Math.max(6, step - 3))}px`);
+  boardElement.classList.toggle('compact-cards', height < card.clientWidth * .6);
 }
 
 /** 停止や保存の直前に、表示中に経過した単調増加の時間を状態へ反映する。 */
@@ -106,26 +109,26 @@ function positionButton(zone, index, offset) {
   return button;
 }
 
-/** スートとランクを表示し、色に依存しない日本語のカード名を与える。 */
+/** トランプ文字でカード全体を描画し、読み上げには日本語のカード名を与える。 */
 function cardButton(card, zone, index, offset) {
   const suit = SUITS[Math.floor(card / 13)];
-  const value = ({ 1: 'A', 11: 'J', 12: 'Q', 13: 'K' })[rank(card)] ?? rank(card);
   const button = positionButton(zone, index, offset);
   button.className = `card ${suit.color}`;
   button.dataset.card = card;
   const place = zone === 'tableau' ? `場札 ${index + 1}` : zone === 'cells' ? `フリーセル ${index + 1}` : 'ホームセル';
   button.dataset.label = `${place}、${cardLabel(card)}`;
   markSelection(button);
-  const corner = document.createElement('span');
-  corner.className = 'card-corner';
-  corner.textContent = `${value} ${suit.symbol}\uFE0E`;
-  const center = document.createElement('span');
-  center.className = 'card-center';
-  center.textContent = `${suit.symbol}\uFE0E`;
-  // 見た目の文字を重ねて読み上げず、ボタン全体の名前を利用する。
-  corner.setAttribute('aria-hidden', 'true');
-  center.setAttribute('aria-hidden', 'true');
-  button.append(corner, center);
+  const face = document.createElement('span');
+  face.className = 'card-face';
+  // Unicode の Knight (末尾 C) を飛ばして Q・K を対応させ、補助面文字は code point で作る。
+  face.textContent = String.fromCodePoint(0x1f0a0 + Math.floor(card / 13) * 16 + rank(card) + (rank(card) >= 12 ? 1 : 0));
+  face.setAttribute('aria-hidden', 'true');
+  // 横向きの長い列など、絵柄が極小になる場合だけ余白に識別用の文字を添える。
+  const caption = document.createElement('span');
+  caption.className = 'card-caption';
+  caption.textContent = `${({ 1: 'A', 11: 'J', 12: 'Q', 13: 'K' })[rank(card)] ?? rank(card)} ${suit.symbol}\uFE0E`;
+  caption.setAttribute('aria-hidden', 'true');
+  button.append(face, caption);
   return button;
 }
 

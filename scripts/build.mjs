@@ -1,4 +1,4 @@
-/** 静的ビルド。ソースの可読性を保ち、配布物の空白・コメントを削減して容量を検証する。 */
+/** 静的ビルド。ソースの可読性を保ち、配布物だけを最小化して容量を検証する。 */
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, posix, resolve } from 'node:path';
@@ -8,12 +8,14 @@ import { checkSize } from './size.mjs';
 
 const digest = (content) => createHash('sha256').update(content).digest('hex');
 
-/** 正式な構文解析で空白・コメントだけを削減し、日本語や文字列内の改行を維持する。 */
+/** 空白・コメントと JS の内部識別子を削減し、公開名と日本語・文字列の意味を維持する。 */
 function compact(content, extension) {
   if (!['.js', '.css'].includes(extension)) return content;
   return transformSync(content, {
     loader: extension.slice(1),
     minifyWhitespace: true,
+    // export 名やプロパティ名は保ち、配布 JS 内部の名前だけを短縮する。
+    minifyIdentifiers: extension === '.js',
     charset: 'utf8',
     legalComments: 'none',
   }).code;

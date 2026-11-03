@@ -211,30 +211,38 @@ async function renderedFonts(page, selector) {
   return (await page.command('CSS.getPlatformFontsForNode', { nodeId })).fonts;
 }
 
-/** 四つの絵柄の実フォント、数字・日本語のフォールバック、取得元を検証する。 */
-async function checkSymbolFont(page, browser, url, label) {
+/** 全 52 枚のトランプ文字と実フォント、ホーム記号、日本語、取得元を検証する。 */
+async function checkCardFont(page, browser, url, label) {
   await page.evaluate('document.fonts.ready.then(() => true)');
-  assert.equal(await page.evaluate(`document.fonts.check('16px "Noto Sans Symbols 2"', '♠♣♥♦')`), true);
-  const cards = await page.evaluate(`Array.from({ length: 4 }, (_, suit) =>
-    [...document.querySelectorAll('[data-card]')].find(card => Math.floor(Number(card.dataset.card) / 13) === suit).dataset.card)`);
-  const suits = [];
+  assert.equal(await page.evaluate(`document.fonts.check('16px "Noto Sans Symbols 2"', '🂡🂱🃁🃑♠♣♥♦')`), true);
+  const cards = await page.evaluate(`[...document.querySelectorAll('[data-card]')].map(card => ({
+    id: Number(card.dataset.card), face: card.querySelector('.card-face')?.textContent,
+    hidden: card.querySelector('.card-face')?.getAttribute('aria-hidden'), label: card.getAttribute('aria-label')
+  }))`);
+  assert.deepEqual(cards.map(card => card.id).sort((a, b) => a - b), Array.from({ length: 52 }, (_, card) => card),
+    'The initial deal and saved offline fixture must contain all 52 cards');
   // Chromium の Fontations 使用時は、実フォント名にバックエンド名が付記される。
   const isNoto = font => /^Noto Sans Symbols 2(?: \(Fontations\))?$/.test(font.familyName);
-  for (const [index, card] of cards.entries()) {
-    const fonts = await renderedFonts(page, `[data-card="${card}"] .card-center`);
-    const custom = fonts.filter(font => font.isCustomFont && font.glyphCount > 0);
-    assert.equal(custom.length, 1, `A suit must use one downloaded font: ${JSON.stringify(fonts)}`);
-    assert.ok(isNoto(custom[0]), `Unexpected suit font: ${JSON.stringify(custom[0])}`);
-    suits.push(custom[0]);
+  let sample;
+  for (const card of cards) {
+    const rank = card.id % 13 + 1;
+    // Unicode の Knight は通常の 52 枚に含まれず、Q/K の直前で一つ飛ばす。
+    const expected = 0x1f0a0 + Math.floor(card.id / 13) * 0x10 + rank + (rank >= 12 ? 1 : 0);
+    assert.equal([...(card.face ?? '')].length, 1, `Card ${card.id} must contain one Unicode code point`);
+    assert.equal(card.face.codePointAt(0), expected, `Wrong playing-card glyph for card ${card.id}`);
+    assert.equal(card.hidden, 'true', 'The visual glyph must not duplicate its spoken card label');
+    assert.ok(card.label && !card.label.includes(card.face), 'The button must keep a readable Japanese label');
+    const fonts = (await renderedFonts(page, `[data-card="${card.id}"] .card-face`)).filter(font => font.glyphCount > 0);
+    assert.equal(fonts.length, 1, `A full card must use one font: ${JSON.stringify(fonts)}`);
+    assert.ok(fonts[0].isCustomFont && isNoto(fonts[0]), `Card ${card.id} fell back from Noto: ${JSON.stringify(fonts)}`);
+    assert.equal(fonts[0].glyphCount, 1, `Card ${card.id} must be rendered as one playing-card glyph`);
+    sample = fonts[0];
+  }
+  for (let index = 0; index < 4; index += 1) {
     const home = await renderedFonts(page, `[data-zone="foundations"][data-index="${index}"]`);
     assert.ok(home.some(font => font.isCustomFont && isNoto(font) && font.glyphCount > 0),
       `Home symbol must use the downloaded font: ${JSON.stringify(home)}`);
   }
-  const corner = await renderedFonts(page, '[data-card="9"] .card-corner');
-  assert.ok(corner.some(font => font.isCustomFont && isNoto(font) && font.glyphCount === 1),
-    `The 10 of spades corner must render its suit with Noto: ${JSON.stringify(corner)}`);
-  assert.ok(corner.some(font => !font.isCustomFont && font.glyphCount >= 2),
-    `The two rank digits must use the system font: ${JSON.stringify(corner)}`);
   const japanese = await renderedFonts(page, '#message');
   assert.ok(japanese.length && japanese.every(font => !font.isCustomFont),
     `Japanese must keep its system fallback: ${JSON.stringify(japanese)}`);
@@ -242,9 +250,9 @@ async function checkSymbolFont(page, browser, url, label) {
   assert.ok(browser.network.filter(resource => /^https?:/.test(resource)).every(resource => new URL(resource).origin === origin),
     'The app must not fetch resources from an external origin');
   const fontUrls = [...new Set(browser.network.filter(resource => /\.woff2(?:[?#]|$)/.test(resource)))];
-  assert.equal(fontUrls.length, 1, `Only the bundled suit font should be requested: ${JSON.stringify(fontUrls)}`);
+  assert.equal(fontUrls.length, 1, `Only the bundled card font should be requested: ${JSON.stringify(fontUrls)}`);
   assert.ok(new URL(fontUrls[0]).pathname.startsWith(`${prefix}fonts/`));
-  console.log(`PASS font ${label}: four suits rendered by ${suits[0].familyName} (${suits[0].postScriptName}); digits/Japanese use system fonts; same-origin WOFF2`);
+  console.log(`PASS font ${label}: all 52 playing-card glyphs and four home suits use ${sample.familyName} (${sample.postScriptName}); Japanese uses system fonts; same-origin WOFF2`);
 }
 
 /** デスクトップと狭い画面の表示、文字コード、表示文字列を検証する。 */
@@ -272,8 +280,8 @@ async function checkLayout(page, screenshotDirectory) {
     assert.equal(state.brokenText, false);
     assert.equal(state.heading, 'Free-FreeCell');
     assert.match(state.title, /^Free-FreeCell(?:\s|$)/);
-    if (width < 900) await checkBoardBounds(page, `${width}x${height}`);
     await capturePage(page, join(screenshotDirectory, `freecell-${width}x${height}.png`));
+    await checkBoardBounds(page, `${width}x${height}`);
     console.log(`PASS layout: ${width}x${height}, Free-FreeCell title, UTF-8 Japanese, no page overflow`);
   }
 }
@@ -284,16 +292,44 @@ async function checkBoardBounds(page, label) {
     const board = document.querySelector('#board').getBoundingClientRect();
     const scroll = document.querySelector('#board-scroll');
     const cards = [...document.querySelectorAll('[data-card]')].map(card => card.getBoundingClientRect());
+    const context = document.createElement('canvas').getContext('2d');
     const clippedLabels = [...document.querySelectorAll('.top-slots button, .column > button:last-child')].flatMap(button => {
       const card = button.getBoundingClientRect();
       const labels = button.children.length ? [...button.children] : [button];
       return labels.flatMap(label => {
+        if (!label.getClientRects().length) return [];
         const range = document.createRange();
         range.selectNodeContents(label);
-        const text = range.getBoundingClientRect();
+        let text = range.getBoundingClientRect();
+        let metricsDetails;
+        if (label.classList.contains('card-face')) {
+          // 全札グリフの em は絵柄より大きいため、空白ではなく実際の輪郭の収まりを測る。
+          // 高さ 0 の inline-block で実際の基線を測り、Canvas の同一フォント計測から輪郭を求める。
+          const style = getComputedStyle(label);
+          context.font = style.fontStyle + ' ' + style.fontWeight + ' ' + style.fontSize + ' ' + style.fontFamily;
+          const metrics = context.measureText(label.textContent);
+          const scaleX = text.width / metrics.width;
+          const scaleY = text.height / (metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent);
+          const marker = document.createElement('span');
+          marker.style.cssText = 'display:inline-block;width:0;height:0;vertical-align:baseline';
+          label.append(marker);
+          const baseline = marker.getBoundingClientRect().top;
+          marker.remove();
+          metricsDetails = { rangeTop: text.top, rangeHeight: text.height, font: context.font,
+            ascent: metrics.fontBoundingBoxAscent, descent: metrics.fontBoundingBoxDescent,
+            inkAscent: metrics.actualBoundingBoxAscent, inkDescent: metrics.actualBoundingBoxDescent, baseline, scaleY };
+          text = {
+            left: text.left - metrics.actualBoundingBoxLeft * scaleX,
+            right: text.left + metrics.actualBoundingBoxRight * scaleX,
+            top: baseline - metrics.actualBoundingBoxAscent * scaleY,
+            bottom: baseline + metrics.actualBoundingBoxDescent * scaleY,
+          };
+          if (!Object.values(text).every(Number.isFinite)) return [{ card: button.dataset.card, invalidInkBounds: true }];
+        }
         return text.left < card.left - 1 || text.right > card.right + 1 || text.top < card.top - 1 || text.bottom > card.bottom + 1
           ? [{ card: button.dataset.card ?? button.dataset.zone, text: label.textContent,
-            top: text.top, bottom: text.bottom, cardTop: card.top, cardBottom: card.bottom }] : [];
+            left: text.left, right: text.right, top: text.top, bottom: text.bottom,
+            cardLeft: card.left, cardRight: card.right, cardTop: card.top, cardBottom: card.bottom, metricsDetails }] : [];
       });
     });
     return { left: board.left, right: board.right, top: board.top, bottom: board.bottom,
@@ -891,7 +927,7 @@ async function main() {
     let page = await browser.page();
     await page.navigate(server.url);
     await page.waitFor(`navigator.serviceWorker.getRegistration().then(registration => Boolean(registration?.active))`, 'active service worker');
-    await checkSymbolFont(page, browser, server.url, 'online');
+    await checkCardFont(page, browser, server.url, 'online');
     const firstRequests = server.requests.slice();
     if (!externalUrl) {
       console.log(`First load HTTP: ${firstRequests.length} requests, ${firstRequests.reduce((sum, request) => sum + request.bytes, 0)} body bytes`);
@@ -950,7 +986,7 @@ async function main() {
     assert.equal(await page.evaluate(`fetch('./offline-probe', { cache: 'no-store' }).then(() => false, () => true)`), true, 'Offline probe must fail');
     assert.equal(await textOf(page, '#moves'), '1');
     assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
-    await checkSymbolFont(page, browser, server.url, 'offline restart');
+    await checkCardFont(page, browser, server.url, 'offline restart');
     await page.click('#undo');
     assert.equal(await textOf(page, '#moves'), '0');
     await page.click('#redo');

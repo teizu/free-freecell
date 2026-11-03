@@ -1,14 +1,15 @@
-/* 軽量なカード盤面。同梱した記号フォントで絵柄をそろえ、外部通信を不要にする。 */
+/* 同梱フォントのトランプ文字で、数字札・絵札の枠から図柄まで描画する。 */
 @font-face {
   font-family: "Noto Sans Symbols 2";
-  src: url('./fonts/noto-sans-symbols-2-suits.woff2') format('woff2');
+  src: url('./fonts/noto-sans-symbols-2-cards.woff2') format('woff2');
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  unicode-range: U+2660, U+2663, U+2665-2666;
-  /* 多種類の記号用の大きな下降領域を抑え、4 スートを小さい札にも収める。 */
-  ascent-override: 85%;
-  descent-override: 15%;
+  /* 空白も含め、行の基線が別のフォントのメトリクスへ切り替わるのを防ぐ。 */
+  unicode-range: U+20, U+2660, U+2663, U+2665-2666, U+1F0A1-1F0AB, U+1F0AD-1F0AE, U+1F0B1-1F0BB, U+1F0BD-1F0BE, U+1F0C1-1F0CB, U+1F0CD-1F0CE, U+1F0D1-1F0DB, U+1F0DD-1F0DE;
+  /* 全カード共通の輪郭高 766/1000 に行ボックスを合わせる。フォントの原本は変えない。 */
+  ascent-override: 76.6%;
+  descent-override: 0%;
   line-gap-override: 0%;
 }
 :root {
@@ -59,7 +60,7 @@ dd small { font-size: .8rem; font-weight: normal; color: #536658; }
 .board-scroll.drag-active { overflow: visible; }
 .board {
   --card-height: 142px;
-  --card-step: 33px;
+  --card-step: calc(var(--card-height) * .32 + 2px);
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1.5rem 1rem;
@@ -88,17 +89,30 @@ dd small { font-size: .8rem; font-weight: normal; color: #536658; }
   box-shadow: 0 2px 3px #102d3529;
   user-select: none;
   touch-action: none;
+  overflow: hidden;
 }
 .card.dragging { pointer-events: none; cursor: grabbing; }
 .card.red { color: #ae343b; }
 .column > .card, .column > .empty-slot { position: absolute; left: 0; }
-/* unicode-range により記号だけを統一し、数字と日本語は端末のフォントを使う。 */
-.card-corner, .card-center, .empty-slot[data-zone="foundations"] {
+/* カードの数字・絵札も一文字の図柄に含む。操作文言は端末のフォントを使う。 */
+.card-face, .card-caption, .empty-slot[data-zone="foundations"] {
   font-family: "Noto Sans Symbols 2", system-ui, sans-serif;
   font-synthesis: none;
 }
-.card-corner { position: absolute; left: 8px; top: 3px; font-size: 1.15rem; font-weight: 750; white-space: nowrap; }
-.card-center { display: grid; place-items: center; height: 100%; padding-top: .65rem; font-size: 2.5rem; }
+/* 輪郭の縦横比を保ち、左右対称の送り幅の余白も含めて中央へ置く。 */
+.card-face {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: calc((var(--card-height) - 4px) / .766);
+  line-height: .766;
+  font-weight: 400;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.card-caption { display: none; }
+.compact-cards .card-caption { display: block; position: absolute; left: 2px; top: 2px; font-size: var(--card-label-size); line-height: 1; pointer-events: none; }
 .card[aria-pressed="true"] { background: #fff0bb; border-color: #a57808; box-shadow: inset 0 0 0 2px #cc9d29; }
 /* 重なったカードでも上端の枠が見えるよう、フォーカスは内側へ描く。 */
 .board button:focus-visible { outline: 3px solid #bd8606; outline-offset: -3px; }
@@ -138,8 +152,6 @@ dialog h2 { font-size: 1.2rem; margin-top: 0; }
   .top-slots, .tableau { gap: 3px; }
   .card, .empty-slot { min-height: 0; border-radius: 3px; }
   .empty-slot { font-size: min(1.6rem, calc(var(--card-height) * .65)); line-height: 1; }
-  .card-corner { left: 2px; top: 2px; font-size: var(--card-label-size, 11px); line-height: 1; }
-  .card-center { padding-top: .4rem; font-size: min(1.5rem, calc(var(--card-height) * .35)); line-height: 1; }
   .board-help { margin: .3rem 0; font-size: .65rem; }
   .win-panel { padding: .4rem .6rem; gap: .3rem; margin-bottom: .4rem; }
   .win-panel h2 { font-size: 1rem; }

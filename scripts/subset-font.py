@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""固定版の公式 Noto フォントから、4 スートだけの WOFF2 と OFL を再生成する。"""
+"""固定版の公式 Noto フォントから、52 枚・4 スート・行メトリクス用の空白を生成する。"""
 
 from hashlib import sha256
 from pathlib import Path
@@ -17,6 +17,15 @@ SOURCES = {
     "OFL.txt": "b118dd41337806a5d4797052c77caf3bd096aed783e5eb21b4d11154351e1ac0",
 }
 SUITS = {0x2660, 0x2663, 0x2665, 0x2666}
+# 各スートの 0xC は Knight。通常の 52 枚には含めず、Q=0xD・K=0xE を使う。
+CARDS = {
+    base + rank
+    for base in (0x1F0A0, 0x1F0B0, 0x1F0C0, 0x1F0D0)
+    for rank in range(1, 15)
+    if rank != 12
+}
+# 空白も含め、CSS の基本行メトリクスが別フォントへフォールバックしないようにする。
+CHARACTERS = SUITS | CARDS | {0x20}
 DESTINATION = Path(__file__).resolve().parent.parent / "src" / "fonts"
 
 
@@ -38,7 +47,7 @@ def main() -> None:
     license_text.decode("utf-8")
     with TemporaryDirectory(prefix="freecell-font-") as temporary:
         source = Path(temporary) / "source.ttf"
-        target = Path(temporary) / "noto-sans-symbols-2-suits.woff2"
+        target = Path(temporary) / "noto-sans-symbols-2-cards.woff2"
         source.write_bytes(original)
         options = subset.Options()
         options.flavor = "woff2"
@@ -48,12 +57,12 @@ def main() -> None:
         options.name_IDs = [0, 1, 2, 3, 4, 5, 6, 13, 14]
         font = subset.load_font(source, options)
         subsetter = subset.Subsetter(options=options)
-        subsetter.populate(unicodes=SUITS)
+        subsetter.populate(unicodes=CHARACTERS)
         subsetter.subset(font)
         subset.save_font(font, target, options)
         with TTFont(target) as result:
-            if set(result.getBestCmap()) != SUITS:
-                raise ValueError("出力された文字一覧が 4 スートと一致しません。")
+            if set(result.getBestCmap()) != CHARACTERS:
+                raise ValueError("出力された文字一覧が 52 枚・4 スート・空白の 57 文字に一致しません。")
         content = target.read_bytes()
     DESTINATION.mkdir(parents=True, exist_ok=True)
     (DESTINATION / target.name).write_bytes(content)

@@ -33,7 +33,7 @@ GitHub Pages でフリーセルを遊べるようにするための、仕様と�
 GitHub リポジトリ `teizu/free-freecell` の作成と初回 push は完了しています。
 `origin` は `git@teizu-github:teizu/free-freecell.git` です。[公開サイト](https://teizu.github.io/free-freecell/)とデプロイの成功を確認済みです。
 独自ドメインとソースコードのライセンスは未決定です。
-ゲーム実行時に外部のライブラリ・画像・フォントを取得せず、独自ドメインも前提にしません。スート用の Noto Sans Symbols 2 は、必要な文字とライセンスをサイトに同梱しています。
+ゲーム実行時に外部のライブラリ・画像・フォントを取得せず、独自ドメインも前提にしません。カード全体を描く Noto Sans Symbols 2 のトランプ文字とホームセル用のスートは、必要な文字とライセンスをサイトに同梱しています。
 
 ## 参考資料の扱い
 
