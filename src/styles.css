@@ -88,7 +88,8 @@ dd small { font-size: .8rem; font-weight: normal; color: #536658; }
   background: #fffef8;
   box-shadow: 0 2px 3px #102d3529;
   user-select: none;
-  touch-action: none;
+  /* 1 本指は札のドラッグ、2 本指はブラウザー標準の拡大縮小・移動に任せる。 */
+  touch-action: pinch-zoom;
   overflow: hidden;
 }
 .card.dragging { pointer-events: none; cursor: grabbing; }

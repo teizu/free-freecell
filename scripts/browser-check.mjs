@@ -381,12 +381,18 @@ async function touchPoint(page, point) {
   await page.command('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
 }
 
+/** CDP のタッチ座標は可視 viewport 基準なので、ピンチ後のオフセットを差し引く。 */
+async function inputPoint(page, selector, top = null) {
+  return page.evaluate(`(() => {
+    const rect = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+    return { x: rect.left + rect.width / 2 - (visualViewport?.offsetLeft ?? 0),
+      y: rect.top + (${JSON.stringify(top)} ?? rect.height / 2) - (visualViewport?.offsetTop ?? 0) };
+  })()`);
+}
+
 /** 実際の描画位置へ入力を送り、DOM 差し替えによる二度押しの取りこぼしも検出する。 */
 async function doublePointer(page, selector, touch = false, exposedEdge = false) {
-  const point = await page.evaluate(`(() => {
-    const rect = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
-    return { x: rect.left + rect.width / 2, y: rect.top + ${exposedEdge ? '4' : 'rect.height / 2'} };
-  })()`);
+  const point = await inputPoint(page, selector, exposedEdge ? 4 : null);
   for (let count = 1; count <= 2; count += 1) {
     if (touch) {
       await touchPoint(page, point);
@@ -400,14 +406,8 @@ async function doublePointer(page, selector, touch = false, exposedEdge = false)
 
 /** 実ポインターで札を動かし、追従表示と終了・中止までをブラウザーに処理させる。 */
 async function dragPointer(page, source, destination, { touch = false, exposedEdge = false, cancel = null, cards = 1 } = {}) {
-  const start = await page.evaluate(`(() => {
-    const rect = document.querySelector(${JSON.stringify(source)}).getBoundingClientRect();
-    return { x: rect.left + rect.width / 2, y: rect.top + ${exposedEdge ? '5' : 'rect.height / 2'} };
-  })()`);
-  const end = typeof destination === 'string' ? await page.evaluate(`(() => {
-    const rect = document.querySelector(${JSON.stringify(destination)}).getBoundingClientRect();
-    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-  })()`) : destination;
+  const start = await inputPoint(page, source, exposedEdge ? 5 : null);
+  const end = typeof destination === 'string' ? await inputPoint(page, destination) : destination;
   if (touch) await page.command('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [start] });
   else await page.command('Input.dispatchMouseEvent', { type: 'mousePressed', ...start, button: 'left', buttons: 1, clickCount: 1 });
   for (let step = 1; step <= 4; step += 1) {
@@ -520,6 +520,108 @@ async function checkDragAndDrop(page, server, engine, browser) {
   }
   await page.command('Emulation.setTouchEmulationEnabled', { enabled: false });
   await page.command('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
+/** 倍率を直接設定せず、画面内の 2 本の実タッチを離す・近づける入力で標準ピンチを起こす。 */
+async function pinch(page, center, opening = true, leaveOneFinger = false) {
+  const viewport = await page.evaluate(`({ scale: visualViewport.scale,
+    width: visualViewport.width * visualViewport.scale, height: visualViewport.height * visualViewport.scale })`);
+  const origin = { x: center.x * viewport.scale, y: center.y * viewport.scale };
+  // 第 1 指は必ず対象の中心に置き、第 2 指は画面の余白が最大の方向へ動かす。
+  const directions = [
+    { x: 1, y: 0, room: viewport.width - origin.x }, { x: -1, y: 0, room: origin.x },
+    { x: 0, y: 1, room: viewport.height - origin.y }, { x: 0, y: -1, room: origin.y },
+  ];
+  const direction = directions.sort((a, b) => b.room - a.room)[0];
+  const from = opening ? 32 : 180;
+  const to = opening ? 180 : 32;
+  assert.ok(direction.room > 180, 'Both fingers must stay inside the physical touchscreen');
+
+  /** 指の画面上の位置を一定に保つため、その時点の倍率で CDP の CSS 座標へ戻す。 */
+  async function points(gap) {
+    const scale = await page.evaluate('visualViewport.scale');
+    return [
+      { x: origin.x / scale, y: origin.y / scale, id: 0 },
+      { x: (origin.x + direction.x * gap) / scale, y: (origin.y + direction.y * gap) / scale, id: 1 },
+    ];
+  }
+  await page.command('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: await points(from) });
+  assert.equal(await page.evaluate(`document.querySelectorAll('.dragging').length`), 0,
+    'Two fingers must cancel dragging before native pinch begins');
+  for (let step = 1; step <= 12; step += 1) {
+    await page.command('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: await points(from + (to - from) * step / 12) });
+    await pause(30);
+  }
+  if (leaveOneFinger) {
+    // 片方だけ離し、残った指を動かしても元のドラッグを復活させない。
+    const [remaining] = await points(to);
+    await page.command('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [remaining] });
+    await page.command('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ ...remaining, x: remaining.x + 10 }] });
+    assert.equal(await page.evaluate(`document.querySelectorAll('.dragging').length`), 0);
+  }
+  await page.command('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await pause(80);
+  return page.evaluate('visualViewport.scale');
+}
+
+/** どこからでも標準ピンチが使え、履歴と札サイズを保ち、拡大後も単指ドラッグできることを確認する。 */
+async function checkPinchZoom(page, server, browser) {
+  await page.command('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 2 });
+  await page.command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  const card = position('tableau', 3, 6);
+  const areas = [
+    ['card', card], ['free cell', position('cells', 1)], ['home cell', position('foundations', 2)],
+    ['toolbar', '#new-game'], ['checkbox', '#auto-enabled'], ['background', 'h1'],
+  ];
+  for (const [label, selector] of areas) {
+    await loadFixture(page, orderedGame(), server.url);
+    const initial = await page.evaluate(`({ scale: visualViewport.scale,
+      height: document.querySelector('#board').style.getPropertyValue('--card-height') })`);
+    assert.equal(initial.scale, 1);
+    const networkStart = browser.network.length;
+    await page.evaluate(`window.pinchStartedOnTarget = false;
+      document.addEventListener('pointerdown', event => {
+        window.pinchStartedOnTarget = Boolean(event.target.closest(${JSON.stringify(selector)}));
+      }, { once: true, capture: true })`);
+    const expanded = await pinch(page, await inputPoint(page, selector));
+    assert.equal(await page.evaluate('window.pinchStartedOnTarget'), true, `${label}: the first finger must touch the target itself`);
+    assert.ok(expanded > 1.2, `${label}: native pinch must enlarge the page, actual ${expanded}`);
+    assert.equal(await textOf(page, '#moves'), '0', `${label}: pinch must not move any card`);
+    assert.equal(await page.evaluate(`document.querySelector('#confirm-dialog').open || document.querySelector('#auto-enabled').checked`), false,
+      `${label}: pinch must not activate the touched control`);
+    assert.equal(await page.evaluate(`document.querySelector('#board').style.getPropertyValue('--card-height')`), initial.height,
+      `${label}: fitting the board must not undo the user's zoom`);
+    const center = await page.evaluate('({ x: visualViewport.width / 2, y: visualViewport.height / 2 })');
+    const reduced = await pinch(page, center, false);
+    assert.ok(reduced < expanded - 0.1, `${label}: inward pinch must reduce the page, actual ${reduced}`);
+    assert.equal(await textOf(page, '#moves'), '0');
+    assert.equal(browser.network.slice(networkStart).filter(url => new URL(url).pathname !== `${prefix}sw.js`).length, 0,
+      `${label}: pinching must not fetch resources`);
+  }
+
+  // 先に 1 本指で追従を開始し、2 本目でホームへの誤ドロップをせずピンチへ切り替える。
+  await loadFixture(page, orderedGame(), server.url);
+  const start = await inputPoint(page, card);
+  await page.command('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ ...start, id: 0 }] });
+  const first = { x: start.x, y: start.y - 20, id: 0 };
+  await page.command('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [first] });
+  assert.equal(await page.evaluate(`document.querySelectorAll('.dragging').length`), 1);
+  const scale = await pinch(page, first, true, true);
+  assert.ok(scale > 1.2, `Pinch begun during drag must enlarge the page, actual ${scale}`);
+  assert.equal(await textOf(page, '#moves'), '0');
+  assert.equal(await page.evaluate(`document.querySelectorAll('[aria-pressed="true"], .dragging').length`), 0);
+  // 拡大された画面内で見えている列を使い、指を全て離した後の新しい操作を確認する。
+  await dragPointer(page, card, position('cells', 3), { touch: true });
+  assert.equal(await textOf(page, '#moves'), '1', 'One-finger drag must still work while zoomed');
+  assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('cells', 3))}).dataset.card`), '39');
+  assert.equal(await page.evaluate(`document.querySelectorAll('[aria-pressed="true"], .dragging').length`), 0);
+  assert.ok(Math.abs(await page.evaluate('visualViewport.scale') - scale) < 0.01, 'Dragging must preserve the chosen zoom');
+  await page.click('#undo');
+  assert.equal(await textOf(page, '#moves'), '0');
+  await page.command('Emulation.setTouchEmulationEnabled', { enabled: false });
+  await page.command('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  await page.navigate(server.url);
+  console.log('PASS pinch: native zoom in/out over cards, free/home cells, toolbar, checkbox and background; drag-to-pinch cancellation, residual finger, zoomed drag, no gameplay network');
 }
 
 /** 二度押しでホームを優先し、移動できない単札だけをフリーセルへ送ることを検証する。 */
@@ -948,6 +1050,7 @@ async function main() {
     await checkAutomaticHome(page, server, engine, browser);
     await checkGroupMove(page, server, engine);
     await checkDragAndDrop(page, server, engine, browser);
+    await checkPinchZoom(page, server, browser);
     await checkWin(page, server, engine);
     await checkStorage(page, server);
     await checkTouchAndLongColumn(page, server, engine, temp);

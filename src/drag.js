@@ -40,7 +40,7 @@ export function setupDrag(board, { start, drop, cancel }) {
     else cancel();
   }
 
-  /** 別の指や入力機器が加わったら、古い札の移動表示を必ず片付ける。 */
+  /** 2 本目の指でドラッグを中止し、CSS で許可した標準ピンチ操作へ引き渡す。 */
   document.addEventListener('pointerdown', () => {
     suppressClick = false;
     finish(null, true);

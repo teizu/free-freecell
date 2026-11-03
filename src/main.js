@@ -33,6 +33,8 @@ function announce(message) {
 
 /** 小画面では列の枚数と表示可能な高さから縮め、盤面全体を見渡せるようにする。 */
 function fitBoard() {
+  // ピンチによる拡大は利用者に任せ、拡大中に縮小し直さない。
+  if (window.visualViewport && visualViewport.scale !== 1) return;
   const card = boardElement.querySelector('button');
   if (!card) return;
   if (!matchMedia('(max-width: 800px), (max-height: 500px)').matches) {
@@ -41,8 +43,6 @@ function fitBoard() {
     boardElement.classList.remove('compact-cards');
     return;
   }
-  // ピンチによる拡大は利用者に任せ、拡大中に縮小し直さない。
-  if (window.visualViewport && visualViewport.scale !== 1) return;
   const available = Math.max(80, (window.visualViewport?.height ?? innerHeight) - boardElement.getBoundingClientRect().top - scrollY - 8);
   const steps = Math.max(1, ...getBoard(game).tableau.map((pile) => pile.length - 1));
   // 固定高 43px を除き、上端のランクと小スートが見える段差（高さの32%+2px）も確保する。
