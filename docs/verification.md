@@ -49,7 +49,20 @@ Chromium 140.0.7339.16（Linux、headless）と、一時 HTTP サーバーの `/
 ## GitHub Pages
 
 ユーザーによる Source = GitHub Actions の設定後、GitHub API の `has_pages: true` を確認しました。
-本番のデプロイと公開 URL での検証は、この記録作成時点では実施前です。完了後に結果を追記します。
+
+- 公開 URL: [https://teizu.github.io/free-freecell/](https://teizu.github.io/free-freecell/)
+- 実装コミット: `a6196ecc31a28a7b50bbb6d51a0caef7ffa20edd`
+- [GitHub Actions 実行 41592067188](https://github.com/teizu/free-freecell/actions/runs/41592067188): テスト・ビルド・容量チェック・デプロイすべて成功。
+- 公開 URL から全 7 ファイルを取得し、HTTP 200 とローカルの検証済み `dist/` とのバイト単位の一致を確認。
+- `Accept-Encoding: gzip` を指定した取得で、レスポンス本文の合計は **15,954 バイト**。圧縮前は 40,241 バイト。HTTP ヘッダー・TLS は含めない。
+- 確認時の `Cache-Control` は全ファイル `max-age=600`。これは観測結果であり、アプリが配信側ヘッダーを指定したものではない。
+
+`npm run test:browser -- --url https://teizu.github.io/free-freecell/` を新規ブラウザープロファイルで実行し、終了コード 0 を確認しました。
+幅 320・768・1280px、キーボード・タッチ、2 枚移動、Undo／Redo、新規・再開始、勝利、保存復元・破損・保存拒否、長い列、実タブ非表示時の時計停止と復帰を確認しています。
+初回のキャッシュ準備と再訪の後にブラウザープロセスを終了し、DNS を遮断して Network をオフラインにした状態で再起動しても、同じ公開 URL からの復元・Undo／Redo・新規ゲームが動作しました。
+公開サイト上での更新試験は行わず、同じ配布内容を使ったローカルの更新試験を根拠としています。
+
+この記録だけの更新はアプリの配布内容を変えず、公開ワークフローの起動対象から除外しています。
 
 ## 検証の限界
 

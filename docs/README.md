@@ -10,7 +10,7 @@ GitHub Pages でフリーセルを遊べるようにするための、仕様と�
 **全配布物 50KB（50,000 バイト、圧縮前）以下、ブラウザー内でのプレイ、通信の最小化**を機能追加より優先します。
 初回取得とキャッシュ完了後のオフライン再起動、およびローカルコピーの `localhost` での起動を初回公開の必須条件とします。
 測定対象と通信・キャッシュの定義は [実装方針](architecture.md) を正とし、開発時には [AGENTS.md](../AGENTS.md) も遵守します。
-ゲームと Service Worker、公開物の生成・容量チェックを実装しています。実ブラウザーの最終検証と本番公開の確認は進行中です。
+ゲームと Service Worker、公開物の生成・容量チェックを実装し、GitHub Pages へ公開しました。Chromium で本番の操作・オフライン再起動を確認済みです。
 
 | 文書 | 内容 |
 | --- | --- |
@@ -30,7 +30,7 @@ GitHub Pages でフリーセルを遊べるようにするための、仕様と�
 - `main` の更新を検証して `dist/` だけを公開する GitHub Actions 設定と、PR の検証設定。
 
 GitHub リポジトリ `teizu/free-freecell` の作成と初回 push は完了しています。
-`origin` は `git@teizu-github:teizu/free-freecell.git` です。実際の Pages 公開状況は未確認です。
+`origin` は `git@teizu-github:teizu/free-freecell.git` です。[公開サイト](https://teizu.github.io/free-freecell/)とデプロイの成功を確認済みです。
 独自ドメインとソースコードのライセンスは未決定です。
 外部ライブラリ・画像・Web フォントを使用せず、独自ドメインも前提にしません。
 

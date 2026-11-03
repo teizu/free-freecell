@@ -16,7 +16,7 @@
 
 - GitHub リポジトリは `teizu/free-freecell`、ローカルフォルダは `/home/moto/src/Game/freecell`。
 - `origin` は `git@teizu-github:teizu/free-freecell.git`。`teizu-github` は SSH 設定上のホスト別名なので、自動で `github.com` に置き換えない。
-- GitHub Pages の公開予定 URL は `https://teizu.github.io/free-freecell/`。アセットと Service Worker はこのサブパスに対応させる。
+- GitHub Pages の公開 URL は `https://teizu.github.io/free-freecell/`。アセットと Service Worker はこのサブパスに対応させる。
 - 実際の公開状況はデプロイ結果で確認し、リポジトリへの push だけで公開済みと判断しない。
 - `main` への push はテスト・ビルド・容量検証の後に Pages の自動公開を開始する。PR では検証だけを実行する。
 

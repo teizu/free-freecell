@@ -17,10 +17,10 @@ Node.js 24 の標準機能で公開ファイルを生成し、外部パッケー
 
 配札、1 枚・連続したカードの移動、Undo／Redo、新しいゲーム、同じ配りのやり直し、手数・時間、勝利判定を実装しています。
 マウス・タップ・キーボードで操作でき、進行の保存・復元と、配布版のオフライン起動に対応しています。
-実ブラウザーでの最終確認と公開確認は進行中です。確認環境と未検証範囲は [検証記録](docs/verification.md) に記載します。
+GitHub Pages への公開と、Chromium での本番操作・オフライン再起動を確認済みです。確認環境と未検証範囲は [検証記録](docs/verification.md) に記載しています。
 GitHub リポジトリは [teizu/free-freecell](https://github.com/teizu/free-freecell) です。初回 push は完了しています。
 `origin` は SSH 設定のホスト別名を使った `git@teizu-github:teizu/free-freecell.git` です。
-GitHub Pages の公開先は `https://teizu.github.io/free-freecell/` を予定しています。実際の公開状況は未確認です。
+公開サイト: **[https://teizu.github.io/free-freecell/](https://teizu.github.io/free-freecell/)**
 
 ## ローカルで遊ぶ
 

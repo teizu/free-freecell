@@ -3,8 +3,8 @@
 ## 配信対象
 
 GitHub Pages のプロジェクトサイトを使用します。
-リポジトリは `teizu/free-freecell` とし、公開予定 URL は `https://teizu.github.io/free-freecell/` です。
-この URL は独自ドメインを使わないプロジェクトサイトの形式から決まるもので、実際の公開状況は未確認です。
+リポジトリは `teizu/free-freecell`、公開 URL は [https://teizu.github.io/free-freecell/](https://teizu.github.io/free-freecell/) です。
+2026-11-03 に MVP のデプロイが成功し、公開ファイルの一致と、本番の操作・オフライン再起動を確認しました。
 HTML・CSS・JavaScript を静的に配信し、サーバー側のアプリは用意しません。
 この構成は [GitHub Pages の概要](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages) に基づきます。
 
@@ -39,7 +39,7 @@ checkout → Node.js の準備 → `npm test` → `npm run build` → Pages 設�
 | `origin` | `git@teizu-github:teizu/free-freecell.git` |
 | ブランチ | `main`（追跡先: `origin/main`） |
 | ローカルフォルダ | `/home/moto/src/Game/freecell` |
-| Pages の公開予定 URL | `https://teizu.github.io/free-freecell/` |
+| Pages の公開 URL | `https://teizu.github.io/free-freecell/` |
 
 `teizu-github` は利用者の SSH 設定にあるホスト別名です。この接続先を通常の `github.com` に書き換えずに使用します。
 別の端末でこの SSH URL を使う場合は、その端末でも対応する SSH 設定と鍵を用意します。
