@@ -1,182 +1,115 @@
-/*
- * FreeCell 初期画面。外部フォントや画像に依存せず、余白と色で盤面を表現する。
- * この配置見本のスタイルは、操作可能なゲーム盤面の実装時に見直す。
- */
+/* 軽量なカード盤面。外部画像・フォントを使わず、可読性と操作領域を保つ。 */
 :root {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Noto Sans JP", sans-serif;
   color: #263b32;
   background: #f6f5ef;
-  line-height: 1.7;
+  line-height: 1.6;
   color-scheme: light;
 }
-
-* {
-  box-sizing: border-box;
+* { box-sizing: border-box; }
+body { margin: 0; }
+button, summary { -webkit-tap-highlight-color: transparent; }
+button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid #cbd5c9;
+  border-radius: .5rem;
+  padding: .55rem .9rem;
+  min-height: 44px;
+  color: #263b32;
+  background: #fffef8;
+  touch-action: manipulation;
 }
-
-body {
-  margin: 0;
-}
-
-.site-header,
-main,
-.site-footer {
-  width: min(100% - 2rem, 64rem);
-  margin-inline: auto;
-}
-
-.site-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding-block: 1.5rem;
-  border-bottom: 1px solid #d9dfd6;
-}
-
-.brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.65rem;
-  color: inherit;
-  font-size: 1.2rem;
-  font-weight: 750;
-  text-decoration: none;
-}
-
-.brand-mark {
-  font-size: 1.8rem;
-}
-
-.edition,
-.eyebrow,
-.site-footer {
-  color: #536658;
-  font-size: 0.875rem;
-}
-
-.introduction {
-  padding-block: 2.5rem 1.75rem;
-}
-
-.introduction p {
-  margin-block: 0.5rem;
-}
-
-h1 {
-  margin: 0;
-  font-size: clamp(2rem, 5vw, 3rem);
-  letter-spacing: 0.06em;
-}
-
-/* 盤面は 8 列を保ち、初期版の見本は狭い画面でも全体を収める。 */
-.game-preview {
-  padding: clamp(1rem, 3vw, 2rem);
-  color: #f2f6ec;
-  background: #214e3c;
-  border-radius: 1rem;
-}
-
-.preview-heading {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-}
-
-h2 {
-  margin: 0;
-  font-size: 1.125rem;
-}
-
-.status-label {
-  padding: 0.15rem 0.65rem;
-  border: 1px solid #7d9b82;
-  border-radius: 2rem;
-  font-size: 0.75rem;
-}
-
-.preview-note,
-.board-caption {
-  color: #d5e2d5;
-  font-size: 0.875rem;
-}
-
-.board-preview {
+button:hover:not(:disabled) { background: #eef2e6; }
+button:disabled { opacity: .4; cursor: default; }
+button.primary { background: #214e3c; border-color: #214e3c; color: white; }
+button.primary:hover { background: #163f2e; }
+[hidden] { display: none !important; }
+:focus-visible { outline: 3px solid #b78013; outline-offset: 3px; }
+.site-header, main, .site-footer { width: min(100% - 2rem, 66rem); margin-inline: auto; }
+.site-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-block: 1rem; }
+.brand { display: flex; align-items: center; gap: .6rem; }
+.brand > span { font-size: 2rem; }
+h1 { font-size: 1.35rem; margin: 0; letter-spacing: -.03em; }
+.tagline, .site-footer { color: #536658; font-size: .8rem; }
+.toolbar { display: flex; flex-wrap: wrap; gap: .65rem; justify-content: space-between; }
+.actions { display: flex; gap: .5rem; }
+.scoreboard { display: flex; gap: 2rem; margin: 1rem 0 .5rem; }
+.scoreboard > div { display: flex; align-items: baseline; gap: .65rem; }
+dt { font-size: .8rem; color: #536658; }
+dd { margin: 0; font-size: 1.25rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+dd small { font-size: .8rem; font-weight: normal; color: #536658; }
+.message { min-height: 3rem; margin: .4rem 0; font-size: .875rem; }
+.board-scroll { max-width: 100%; overflow-x: auto; border-radius: .85rem; background: #214e3c; }
+.board {
+  --card-height: 142px;
+  --card-step: 33px;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: clamp(1rem, 3vw, 2rem) 1rem;
-  margin-block: 1.5rem;
+  gap: 1.5rem 1rem;
+  min-width: 592px;
+  padding: 1.25rem;
 }
-
-.slot-group {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: clamp(0.25rem, 1vw, 0.75rem);
+.top-group h2 { margin: 0 0 .5rem; color: #dce7d8; font-size: .75rem; font-weight: 500; letter-spacing: .08em; }
+.top-slots { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.tableau { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 8px; align-items: start; }
+.column { position: relative; min-width: 0; }
+.card, .empty-slot { width: 100%; height: var(--card-height); padding: 0; border-radius: 6px; }
+.empty-slot {
+  border: 1px solid #71917a;
+  background: transparent;
+  color: #b9cebc;
+  font-size: 1.6rem;
 }
-
-.preview-slot {
-  display: grid;
-  place-items: center;
-  aspect-ratio: 5 / 7;
-  border: 1px solid #6b8c76;
-  border-radius: 0.4rem;
-  color: #aac2af;
-  font-size: clamp(1rem, 3vw, 2rem);
+.empty-slot:hover:not(:disabled) { background: #315f48; }
+.card {
+  position: relative;
+  display: block;
+  text-align: left;
+  color: #203c31;
+  border: 1px solid #d7d5c9;
+  background: #fffef8;
+  box-shadow: 0 2px 3px #102d3529;
+  user-select: none;
 }
-
-.tableau {
-  grid-column: 1 / -1;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+.card.red { color: #ae343b; }
+.column > .card, .column > .empty-slot { position: absolute; left: 0; }
+.card-corner { position: absolute; left: 8px; top: 3px; font-size: 1.15rem; font-weight: 750; white-space: nowrap; }
+.card-center { display: grid; place-items: center; height: 100%; padding-top: .65rem; font-size: 2.5rem; }
+.card[aria-pressed="true"] { background: #fff0bb; border-color: #a57808; box-shadow: inset 0 0 0 2px #cc9d29; }
+/* 重なったカードでも上端の枠が見えるよう、フォーカスは内側へ描く。 */
+.board button:focus-visible { outline: 3px solid #bd8606; outline-offset: -3px; }
+.board-help { margin: .55rem 0; font-size: .75rem; color: #536658; }
+.availability { font-size: .75rem; color: #536658; margin-block: 1rem; }
+.availability p { margin-block: .4rem; }
+#storage-status { color: #8a4215; }
+.rules { margin-block: 1rem; padding: 1rem 1.25rem; border: 1px solid #d9dfd6; border-radius: .75rem; font-size: .875rem; }
+summary { cursor: pointer; font-weight: 650; }
+.rules ol { padding-left: 1.5rem; }
+.rules li + li { margin-top: .5rem; }
+.site-footer { text-align: center; padding-block: .5rem 1.5rem; }
+.win-panel { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; background: #e7edda; padding: 1rem 1.25rem; border-radius: .7rem; margin-bottom: 1rem; }
+.win-panel h2 { margin: 0; font-size: 1.5rem; }
+.win-panel p { margin: .25rem 0 0; font-size: .85rem; }
+dialog { width: min(100% - 2rem, 28rem); padding: 1.5rem; color: #263b32; background: #f6f5ef; border: 0; border-radius: 1rem; }
+dialog::backdrop { background: #102b26a6; }
+dialog h2 { font-size: 1.2rem; margin-top: 0; }
+.dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: .65rem; margin-top: 1.5rem; }
+@media (max-width: 800px) {
+  .board { --card-height: 112px; --card-step: 30px; padding: 1rem; }
+  .card-corner { left: 5px; font-size: 1rem; }
+  .card-center { font-size: 2rem; }
 }
-
-.tableau .preview-slot {
-  border-style: dashed;
-}
-
-.board-caption {
-  margin-bottom: 0;
-  text-align: center;
-}
-
-/* ネイティブの details を使い、マウスとキーボードで同じ説明を開ける。 */
-.rules {
-  margin-block: 1.5rem;
-  padding: 1rem 1.25rem;
-  border: 1px solid #d9dfd6;
-  border-radius: 0.75rem;
-}
-
-summary {
-  cursor: pointer;
-  font-weight: 650;
-}
-
-.rules ol {
-  padding-left: 1.5rem;
-}
-
-.rules li + li {
-  margin-top: 0.5rem;
-}
-
-:focus-visible {
-  outline: 3px solid #8a5d12;
-  outline-offset: 4px;
-}
-
-.site-footer {
-  padding-block: 0.5rem 2rem;
-  text-align: center;
-}
-
-@media (max-width: 35rem) {
-  .site-header {
-    flex-wrap: wrap;
-    gap: 0.25rem 1rem;
-  }
-
-  .edition {
-    font-size: 0.75rem;
-  }
+@media (max-width: 480px) {
+  .site-header, main, .site-footer { width: calc(100% - 1.25rem); }
+  .site-header { padding-block: .7rem; }
+  .tagline { font-size: .65rem; }
+  .toolbar { gap: .5rem; }
+  .toolbar .actions { flex: 1 0 auto; }
+  .toolbar button { flex: 1; font-size: .8rem; padding-inline: .6rem; }
+  .scoreboard { gap: 1.1rem; }
+  .scoreboard > div { gap: .35rem; }
+  .message { min-height: 3.5rem; }
+  .board { --card-height: 104px; --card-step: 30px; gap: 1rem; }
+  .rules { padding: .85rem; }
 }

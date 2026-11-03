@@ -1,7 +1,8 @@
 # FreeCell
 
-GitHub Pages で遊べる、日本語のフリーセルを作るプロジェクトです。
-HTML・CSS・JavaScript の静的サイトとして実装し、サーバーやビルドツールを必要としない構成から始めます。
+GitHub Pages で遊べる、日本語のフリーセルです。
+HTML・CSS・JavaScript の静的サイトで、ゲームはブラウザー内だけで動作します。
+Node.js 24 の標準機能で公開ファイルを生成し、外部パッケージのインストールは必要ありません。
 
 ## 最上位の方針
 
@@ -14,46 +15,79 @@ HTML・CSS・JavaScript の静的サイトとして実装し、サーバーや�
 
 ## 現在の状態
 
-初期セットアップ段階です。`src/` には日本語の案内、盤面の配置見本、遊び方を表示するひな形があります。
-**配札、カード移動、Undo／Redo、保存、オフライン再起動などのゲーム機能は未実装で、まだ遊べません。**
+配札、1 枚・連続したカードの移動、Undo／Redo、新しいゲーム、同じ配りのやり直し、手数・時間、勝利判定を実装しています。
+マウス・タップ・キーボードで操作でき、進行の保存・復元と、配布版のオフライン起動に対応しています。
+実ブラウザーでの最終確認と公開確認は進行中です。確認環境と未検証範囲は [検証記録](docs/verification.md) に記載します。
 GitHub リポジトリは [teizu/free-freecell](https://github.com/teizu/free-freecell) です。初回 push は完了しています。
 `origin` は SSH 設定のホスト別名を使った `git@teizu-github:teizu/free-freecell.git` です。
 GitHub Pages の公開先は `https://teizu.github.io/free-freecell/` を予定しています。実際の公開状況は未確認です。
 
-## ローカルで表示する
+## ローカルで遊ぶ
 
-Python 3 を使用する場合、リポジトリ直下で次を実行します。
+Node.js 24 と Python 3 がある環境で、リポジトリ直下から次を実行します。
 
 ```sh
-python3 -m http.server 8000 --bind 127.0.0.1 --directory src
+npm run build
+python3 -m http.server 8000 --bind 127.0.0.1 --directory dist
 ```
 
 ブラウザーで <http://127.0.0.1:8000/> を開きます。終了は `Ctrl+C` です。
-Python は確認用の HTTP サーバーにだけ使用します。アプリの動作に必要なのはブラウザーだけです。
-ES Modules を使用するため、HTML ファイルの直接起動ではなく HTTP 経由で確認してください。
-ソースと Python が手元にあれば、この方法の表示にインターネット接続は不要です。
-公開サイトを一度取得してからオフラインで再起動する機能は、Service Worker の実装時に追加します。
+ビルドもゲームもインターネット接続を必要としません。生成済みの `dist/` を別の端末にコピーして使う場合、Node.js は不要です。
+「オフラインでも遊べます」と表示された後は、サーバーを止めても同じ URL で再起動できます。
+ただし、ブラウザーのキャッシュ削除や保存禁止設定がある場合は、サーバーから再取得が必要です。
+
+Python は静的ファイルの配信にだけ使用します。アプリの処理はすべてブラウザー内で動きます。
+ES Modules と Service Worker を使うため、`file://` での HTML 直接起動は対象外です。
+
+## 開発と検証
+
+開発用ソースをビルドせず確認する場合は、公開物と別のポートを使います。
+
+```sh
+python3 -m http.server 8001 --bind 127.0.0.1 --directory src
+```
+
+<http://127.0.0.1:8001/> では Service Worker を登録しません。編集内容を直接確認でき、サーバー起動中はネット接続なしで遊べます。
+オフライン再起動と更新動作は `dist/` で確認してください。
+
+```sh
+npm test
+npm run build
+npm run check:size
+```
+
+`npm run build` は JS・CSS に内容ハッシュを付け、Service Worker の保存対象を生成します。
+`dist/` 全体が 50,000 バイトを超えると失敗します。ソースの説明コメントは維持します。
 
 ## 構成
 
 ```text
 src/
-  index.html             ページの起点と日本語の案内
-  main.js                盤面の配置見本を描画
-  styles.css             初期画面のスタイル
+  index.html             盤面、操作ボタン、遊び方
+  main.js                描画・操作・時計・各機能の接続
+  game.js                配札、合法手、履歴、勝利判定
+  storage.js             保存・復元と検証
+  offline.js             オフラインの準備・更新状況
+  sw.js                  配布版のキャッシュと更新
+  styles.css             レスポンシブな盤面
+scripts/                 ビルド・容量チェック・ブラウザー検証
+tests/                   ゲーム・保存・ビルド・キャッシュのテスト
+dist/                    生成された公開物（Git 管理対象外）
 docs/
-  README.md              文書の案内と今回の作業範囲
+  README.md              文書の案内
   game-spec.md           ゲーム仕様・操作・受け入れ条件
   architecture.md        構成・実装・検証の方針
   deployment.md          GitHub Pages の公開手順
   roadmap.md             実装の順序と確認項目
+  verification.md        検証結果と未確認の範囲
 .github/workflows/
-  pages.yml              src/ を手動公開するワークフロー
+  pages.yml              main の検証と dist/ の公開
+  check.yml              PR の検証
 ```
 
-仕様は [docs/README.md](docs/README.md) から確認できます。
-JavaScript の構文は `node --check src/main.js` で確認できます。
-ゲームロジックのテストは、その実装と合わせて追加します。
+仕様は [docs/README.md](docs/README.md)、公開方法は [公開手順](docs/deployment.md) から確認できます。
+`main` への push でテスト・ビルド・容量チェックを行い、成功した `dist/` を GitHub Pages に公開します。
+開発文書だけの変更では再公開しません。
 
 ## 参考
 

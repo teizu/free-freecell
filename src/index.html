@@ -1,54 +1,77 @@
 <!doctype html>
-<!-- FreeCell の起点。初期版は盤面の配置見本と遊び方だけを表示する。 -->
+<!-- ブラウザー内で遊べる FreeCell。操作・保存・遊び方をひとつの画面にまとめる。 -->
 <html lang="ja">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="ブラウザーで楽しむフリーセル。現在、ゲームを準備しています。">
+    <meta name="description" content="軽く、静かに遊べるフリーセル。登録不要。初回の準備が完了すればオフラインでも遊べます。">
     <meta name="color-scheme" content="light">
+    <meta name="theme-color" content="#214e3c">
     <title>FreeCell — フリーセル</title>
+    <link rel="icon" href="data:,">
     <link rel="stylesheet" href="./styles.css">
     <script type="module" src="./main.js"></script>
   </head>
   <body>
     <header class="site-header">
-      <a class="brand" href="./" aria-label="FreeCell ホーム">
-        <span class="brand-mark" aria-hidden="true">♣</span>
-        <span>FreeCell</span>
-      </a>
-      <span class="edition">ひとりで楽しむ、カードゲーム</span>
+      <div class="brand"><span aria-hidden="true">♣</span><h1>FreeCell</h1></div>
+      <p class="tagline">ひと息ついて、次の一手を。</p>
     </header>
-
     <main>
-      <section class="introduction" aria-labelledby="page-title">
-        <p class="eyebrow">ひと息ついて、次の一手を。</p>
-        <h1 id="page-title">フリーセル</h1>
-        <p>すべてのカードが見えるからこそ、考える楽しさがある。</p>
-      </section>
-
-      <section class="game-preview" aria-labelledby="preview-title">
-        <div class="preview-heading">
-          <h2 id="preview-title">ゲームを準備しています</h2>
-          <span class="status-label">準備中</span>
+      <section class="game" aria-label="フリーセル">
+        <div class="toolbar" aria-label="ゲームの操作">
+          <div class="actions">
+            <button id="new-game" class="primary" type="button">新しいゲーム</button>
+            <button id="restart" type="button">最初から</button>
+          </div>
+          <div class="actions">
+            <button id="undo" type="button" disabled><span aria-hidden="true">↶</span> 戻す</button>
+            <button id="redo" type="button" disabled><span aria-hidden="true">↷</span> やり直す</button>
+          </div>
         </div>
-        <p class="preview-note">下の盤面は配置の見本です。まだカードを動かして遊ぶことはできません。</p>
-        <!-- 配置見本は操作対象ではないため、読み上げから除外する。 -->
-        <div id="board-preview" class="board-preview" aria-hidden="true"></div>
-        <noscript><p class="preview-note">盤面の見本を表示するには JavaScript を有効にしてください。</p></noscript>
-        <p class="board-caption">4 つのフリーセル · 4 つのホームセル · 8 列の場札</p>
+        <dl class="scoreboard" aria-label="ゲームの進行">
+          <div><dt>時間</dt><dd id="time">0:00</dd></div>
+          <div><dt>手数</dt><dd id="moves">0</dd></div>
+          <div><dt>ホーム</dt><dd><span id="progress">0</span><small> / 52</small></dd></div>
+        </dl>
+        <p id="message" class="message" role="status" aria-live="polite" aria-atomic="true">カードを選んでから、移動先を選んでください。</p>
+        <div id="win-panel" class="win-panel" hidden>
+          <div><h2>クリア！</h2><p>52 枚、すべて揃いました。おつかれさまでした。</p></div>
+          <button id="win-new" type="button">もう一局遊ぶ</button>
+        </div>
+        <div id="board-scroll" class="board-scroll" tabindex="0" role="region" aria-label="盤面。狭い画面では左右にスクロールできます">
+          <div id="board" class="board"></div>
+        </div>
+        <p class="board-help">カード → 移動先の順にタップ。同じカードか背景で選択を解除。</p>
+        <noscript><p class="message">遊ぶにはブラウザーの JavaScript を有効にしてください。</p></noscript>
       </section>
-
+      <div class="availability">
+        <p id="offline-status" role="status">オフラインの準備を確認しています…</p>
+        <p id="storage-status" role="status" hidden></p>
+      </div>
       <details class="rules">
-        <summary>フリーセルの遊び方</summary>
+        <summary>遊び方と操作</summary>
         <ol>
-          <li>52 枚のカードを、8 列の場札にすべて表向きで配ります。</li>
-          <li>場札は赤と黒を交互に、数字が 1 つずつ小さくなるように重ねます。</li>
+          <li>場札は赤と黒を交互に、数字が 1 つずつ小さくなるように重ねます。空の列にはどのカードでも置けます。</li>
           <li>フリーセルには 1 枚ずつ、一時的にカードを置けます。</li>
-          <li>ホームセルに同じマークを A から K まで順に集め、すべて移せたらクリアです。</li>
+          <li>ホームセルには同じマークを A から K まで順に集めます。52 枚すべて移せたらクリアです。</li>
+          <li>赤黒交互の連続した並びは、空き枠を使ってまとめて動かせます。上限は（空きフリーセル + 1）× 2 の空き列数乗。空の移動先は空き列数に含みません。</li>
         </ol>
+        <p>Tab でカードや枠へ移動し、Enter / Space で選択・移動、Escape で選択を解除できます。「戻す」「やり直す」も利用できます。</p>
+        <p>進行はこのブラウザーに保存します。オフラインの準備が完了した後は、ネット接続なしでも開き直して遊べます。保存データやキャッシュを削除すると、進行やオフラインの準備は失われます。</p>
+        <p>配りはランダムです。すべての配りが解けることは保証していません。</p>
       </details>
     </main>
-
     <footer class="site-footer">自分のペースで、一手ずつ。</footer>
+    <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-text">
+      <form method="dialog">
+        <h2 id="confirm-title">ゲームを切り替えますか？</h2>
+        <p id="confirm-text"></p>
+        <div class="dialog-actions">
+          <button id="confirm-cancel" value="cancel">続けて遊ぶ</button>
+          <button id="confirm-accept" class="primary" value="accept">切り替える</button>
+        </div>
+      </form>
+    </dialog>
   </body>
 </html>

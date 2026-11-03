@@ -9,7 +9,8 @@
 - 機能追加や演出より容量と通信量の要件を優先する。上限に収まらない場合は、まず追加機能や依存を見直す。
 
 測定対象・キャッシュ更新・オフライン利用の限界は [実装方針](docs/architecture.md) を参照する。
-オフライン起動は今後の実装であり、現在の配置見本に実装済みと説明しない。
+開発用ソースは `src/`、公開物は `npm run build` で生成する `dist/`。容量は `dist/` 全体で確認する。
+ソース直接起動では Service Worker を登録しない。オフライン起動の検証はビルドした公開物で行う。
 
 ## リポジトリと公開先
 
@@ -17,6 +18,7 @@
 - `origin` は `git@teizu-github:teizu/free-freecell.git`。`teizu-github` は SSH 設定上のホスト別名なので、自動で `github.com` に置き換えない。
 - GitHub Pages の公開予定 URL は `https://teizu.github.io/free-freecell/`。アセットと Service Worker はこのサブパスに対応させる。
 - 実際の公開状況はデプロイ結果で確認し、リポジトリへの push だけで公開済みと判断しない。
+- `main` への push はテスト・ビルド・容量検証の後に Pages の自動公開を開始する。PR では検証だけを実行する。
 
 ## コードの品質
 

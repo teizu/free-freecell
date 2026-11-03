@@ -8,21 +8,24 @@ GitHub Pages のプロジェクトサイトを使用します。
 HTML・CSS・JavaScript を静的に配信し、サーバー側のアプリは用意しません。
 この構成は [GitHub Pages の概要](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages) に基づきます。
 
-`src/` を GitHub Actions の公開成果物とし、`docs/` やリポジトリ全体をアップロードしません。
-ビルド工程はありません。相対パスにより、ルートサイトとリポジトリ名付きのサブパスの両方で表示できるようにします。
+`npm run build` で生成した `dist/` を GitHub Actions の公開成果物とし、`src/`・`docs/`・リポジトリ全体はアップロードしません。
+ビルドには Node.js 24 だけを使い、外部パッケージのインストールは不要です。
+JS・CSS の参照先を内容ハッシュ付きの相対 URL に変換し、Service Worker の保存対象一覧を生成します。
+相対パスにより、ルートサイトとリポジトリ名付きのサブパスの両方に対応します。
 全配布物は **50,000 バイト以下（圧縮前）**とし、ゲームの初回公開前に容量チェックとオフライン動作を確認します。
 計測対象と更新通信の方針は [実装方針](architecture.md) を参照してください。
-将来、最小化した公開物を生成する場合は、ワークフローの計測対象とアップロード先を同じ成果物に変更します。
+計測対象とアップロード先は、常に同じ `dist/` 全体です。ビルドが上限超過で失敗した場合は公開しません。
 
-## 初期段階の設定
+## GitHub Actions の設定
 
 [pages.yml](../.github/workflows/pages.yml) を用意しています。
-起動条件は `workflow_dispatch` のみで、**push だけでは公開しません**。
-`main` ブランチを選択した手動実行だけを受け付けます。
-ゲームの初回公開後、自動公開が必要になれば `main` への push を起動条件に追加します。
+**`main` への push で、検証を通った版を自動公開します。**
+`docs/`・`README.md`・`AGENTS.md` だけの更新では、アプリの再公開を行いません。
+`workflow_dispatch` による手動実行も利用でき、公開対象は `main` に限定します。
+[check.yml](../.github/workflows/check.yml) は PR で同じテストとビルドを行い、公開しません。
 
 設定は [GitHub 公式のカスタムワークフロー手順](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages) を基に、
-checkout → Pages 設定 → `src/` のアップロード → deploy の順としています。
+checkout → Node.js の準備 → `npm test` → `npm run build` → Pages 設定 → `dist/` のアップロード → deploy の順としています。
 公開ジョブには `contents: read`、`pages: write`、`id-token: write` を設定し、`github-pages` 環境を使用します。
 アプリ用の秘密情報や外部 API キーは必要ありません。
 
@@ -49,16 +52,16 @@ checkout → Pages 設定 → `src/` のアップロード → deploy の順と�
 git push origin main
 ```
 
-リポジトリへの push と Pages の公開は別の操作です。現在のワークフローは手動実行時だけ公開します。
+`main` への push は公開処理を開始しますが、テスト・ビルド・デプロイが成功するまでは公開完了ではありません。
 
 ## サイトを公開するとき
 
 1. GitHub の **Settings → Pages → Build and deployment → Source** を **GitHub Actions** にします。
-2. **Actions → Deploy GitHub Pages → Run workflow** で `main` を選び、実行します。
+2. ローカルで `npm test` と `npm run build` を確認し、コミットを `main` に push します。再公開だけを行う場合は **Actions → Deploy GitHub Pages → Run workflow** で `main` を選んで実行できます。
 3. 成功した実行の `github-pages` 環境から公開 URL を開き、下記の確認を行います。
 
-初期ソースをこの手順で公開すると「準備中」の画面が表示されます。
 ゲームとしての初回公開は、[実装計画](roadmap.md) の受け入れ確認を終えてから行います。
+デプロイ結果、公開したコミット、実際に確認した条件は [検証記録](verification.md) に記載します。
 
 ## 公開時の確認
 
@@ -67,7 +70,7 @@ git push origin main
 - サブパスから HTML・CSS・JavaScript を取得でき、404 がない。
 - 日本語とスート記号が文字化けせず、ブラウザーのコンソールにエラーがない。
 - スマートフォンと PC の画面で必要なカード・操作が見える。
-- 保存実装後は、ページ再読込で復元でき、保存が禁止されてもプレイを続けられる。
+- ページ再読込で復元でき、保存が禁止されてもプレイを続けられる。
 - 初回取得とキャッシュ完了後、ネットワークを切ってブラウザーを開き直しても、新規ゲームと保存したゲームの続行ができる。
 - ローカルコピーを HTTP サーバーで起動し、外部ネットワークなしで遊べる。
 - ゲーム操作や再配札で通信が発生せず、再訪時はキャッシュを利用する。初回・再訪・更新時の実転送量を記録する。
