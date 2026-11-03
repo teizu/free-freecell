@@ -19,25 +19,28 @@
     </header>
     <main>
       <section class="game" aria-label="フリーセル">
-        <div class="toolbar" aria-label="ゲームの操作">
-          <div class="actions">
-            <button id="new-game" class="primary">新しいゲーム</button>
-            <button id="restart">最初からやり直す</button>
+        <!-- 操作と進行を同じ欄にまとめ、最大化では左側のスクロール領域にする。 -->
+        <div class="controls">
+          <div class="toolbar" aria-label="ゲームの操作">
+            <div class="actions">
+              <button id="new-game" class="primary">新しいゲーム</button>
+              <button id="restart">最初からやり直す</button>
+            </div>
+            <div class="actions">
+              <button id="undo" aria-keyshortcuts="Control+Z Meta+Z" disabled><span aria-hidden="true">↶</span> 戻す</button>
+              <button id="redo" aria-keyshortcuts="Control+Y Meta+Y" disabled><span aria-hidden="true">↷</span> やり直す</button>
+            </div>
+            <div class="actions">
+              <button id="auto-home">自動</button>
+              <label class="auto-toggle"><input id="auto-enabled" type="checkbox">自動で送る</label>
+            </div>
           </div>
-          <div class="actions">
-            <button id="undo" aria-keyshortcuts="Control+Z Meta+Z" disabled><span aria-hidden="true">↶</span> 戻す</button>
-            <button id="redo" aria-keyshortcuts="Control+Y Meta+Y" disabled><span aria-hidden="true">↷</span> やり直す</button>
-          </div>
-          <div class="actions">
-            <button id="auto-home">自動</button>
-            <label class="auto-toggle"><input id="auto-enabled" type="checkbox">自動で送る</label>
-          </div>
+          <dl class="scoreboard" aria-label="ゲームの進行">
+            <div><dt>時間</dt><dd id="time">0:00</dd></div>
+            <div><dt>手数</dt><dd id="moves">0</dd></div>
+            <div><dt>ホーム</dt><dd><span id="progress">0</span><small> / 52</small></dd></div>
+          </dl>
         </div>
-        <dl class="scoreboard" aria-label="ゲームの進行">
-          <div><dt>時間</dt><dd id="time">0:00</dd></div>
-          <div><dt>手数</dt><dd id="moves">0</dd></div>
-          <div><dt>ホーム</dt><dd><span id="progress">0</span><small> / 52</small></dd></div>
-        </dl>
         <p id="message" class="message" role="status" aria-live="polite" aria-atomic="true">カード → 移動先を選択。</p>
         <div id="win-panel" class="win-panel" hidden>
           <h2>クリア！</h2>
@@ -47,8 +50,8 @@
           <button id="maximize" aria-pressed="false">最大化</button>
           <div id="board" class="board"></div>
         </div>
-        <p class="board-help">タップ・ドラッグで移動。2 回押しはホーム優先、次にフリーセルへ。</p>
-        <noscript><p class="message">遊ぶにはブラウザーの JavaScript を有効にしてください。</p></noscript>
+        <p class="board-help">タップ・ドラッグで移動。2 回押しはホーム優先、次にフリーセル。</p>
+        <noscript><p class="message">JavaScript を有効にしてください。</p></noscript>
       </section>
       <div class="availability">
         <p id="offline-status" role="status">オフラインの準備を確認しています…</p>
@@ -58,26 +61,27 @@
       <details class="rules">
         <summary>遊び方と操作</summary>
         <ol>
-          <li>場札は赤黒交互に 1 つずつ小さく重ねます。空列にはどの札でも置けます。</li>
-          <li>フリーセルには一時的に 1 枚置けます。</li>
-          <li>ホームセルは同じマークを A から K の順に集めます。全 52 枚でクリアです。</li>
-          <li>赤黒交互の連続札はまとめて動かせます。上限は（空きフリーセル + 1）× 2 の空き列数乗。移動先の空列は数えません。</li>
+          <li>場札は赤黒交互に 1 つずつ小さく重ねます。空列はどの札でも置けます。</li>
+          <li>フリーセルは一時置き場（1 枚）。</li>
+          <li>ホームセルに同じマークを A〜K の順に集め、52 枚でクリア。</li>
+          <li>赤黒交互の連続札はまとめて移動可。上限は（空きフリーセル + 1）× 2 の空き列数乗。移動先の空列は除きます。</li>
         </ol>
-        <p>盤面外・Escape・2 本指でドラッグ中止。Tab で札や枠へ移動、Enter / Space で選択・移動、Escape で選択解除。2 本指で拡縮（全画面中は制限あり）。</p>
+        <p>盤面外・Escape・2 本指でドラッグ中止。Tab で移動、Enter / Space で選択・移動、Escape で選択解除。2 本指で拡縮（全画面中は制限あり）。</p>
         <p>Ctrl-Z で戻す、Ctrl-Y でやり直す（Mac は ⌘ でも可）。</p>
-        <p>「自動」は安全な札をホームへ送ります。チェック時は初手を手動で動かすと、以後の操作後に適用。「戻す」で 1 枚ずつ取り消せます。</p>
-        <p>進行をブラウザーに保存。準備完了後はオフラインでも開けます。データ・キャッシュの削除で失われます。</p>
-        <p>ランダムな配りのため、解けない場合もあります。</p>
+        <p>「自動」は安全な札をホームへ。チェック時は初手の移動後から自動で送ります。「戻す」で 1 枚ずつ取り消せます。</p>
+        <p>進行は自動保存。準備完了後はオフラインで遊べます。データ・キャッシュ削除で失われます。</p>
+        <p>ランダム配りのため、解けない場合もあります。</p>
       </details>
     </main>
     <footer class="site-footer">© 2026 teizu inc.<span id="version">ver-__FREECELL_DATE__</span><a href="https://openfontlicense.org/open-font-license-official-text/" target="_blank" rel="noopener">フォントライセンス（外部）</a></footer>
+    <!-- 確認文言は main.js が操作に応じて設定してから表示する。 -->
     <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-text">
       <form method="dialog">
-        <h2 id="confirm-title">ゲームを切り替えますか？</h2>
+        <h2 id="confirm-title"></h2>
         <p id="confirm-text"></p>
         <div class="dialog-actions">
-          <button id="confirm-cancel" value="cancel">続けて遊ぶ</button>
-          <button id="confirm-accept" class="primary" value="accept">切り替える</button>
+          <button id="confirm-cancel" value="cancel"></button>
+          <button id="confirm-accept" class="primary" value="accept"></button>
         </div>
       </form>
     </dialog>

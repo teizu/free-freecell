@@ -774,10 +774,10 @@ async function checkMaximization(page, server, browser, screenshots) {
   /** 操作欄が盤面の左に独立し、操作を重複生成せず画面内へ収めることを確かめる。 */
   async function sidebar(label) {
     const layout = await page.evaluate(`(() => {
-      const toolbar = document.querySelector('.toolbar');
-      const menu = toolbar.getBoundingClientRect();
+      const panel = document.querySelector('.controls');
+      const menu = panel.getBoundingClientRect();
       const board = document.querySelector('#board-scroll').getBoundingClientRect();
-      const controls = [...toolbar.querySelectorAll('button, .auto-toggle')].map(control => {
+      const controls = [...panel.querySelectorAll('button, .auto-toggle, .scoreboard > div')].map(control => {
         const rect = control.getBoundingClientRect();
         return { id: control.id || control.className, left: rect.left, right: rect.right,
           top: rect.top, bottom: rect.bottom, visible: getComputedStyle(control).visibility === 'visible' };
@@ -790,7 +790,7 @@ async function checkMaximization(page, server, browser, screenshots) {
         hit: sound.contains(document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)) },
         menu: { left: menu.left, right: menu.right, top: menu.top, bottom: menu.bottom },
         boardLeft: board.left, boardRight: board.right, width: innerWidth, height: innerHeight,
-        controls, duplicateControls: ['new-game', 'restart', 'undo', 'redo', 'auto-home', 'auto-enabled']
+        controls, duplicateControls: ['new-game', 'restart', 'undo', 'redo', 'auto-home', 'auto-enabled', 'time', 'moves', 'progress']
           .filter(id => document.querySelectorAll('#' + id).length !== 1) };
     })()`);
     assert.ok(layout.menu.left >= -1 && layout.menu.top >= -1 && layout.menu.bottom <= layout.height + 1,
@@ -932,17 +932,42 @@ async function checkMaximization(page, server, browser, screenshots) {
   // 低い画面では左欄をスクロールし、最後のチェックと音声ボタンが重ならないことを確かめる。
   await page.command('Emulation.setDeviceMetricsOverride', { width: 844, height: 240, deviceScaleFactor: 1, mobile: true });
   await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
-  await page.evaluate(`const toolbar = document.querySelector('.toolbar'); toolbar.scrollTop = toolbar.scrollHeight`);
+  await page.evaluate(`const panel = document.querySelector('.controls'); panel.scrollTop = panel.scrollHeight`);
   assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').getBoundingClientRect().bottom <= document.querySelector('#sound-toggle').getBoundingClientRect().top`), true);
+  assert.equal(await page.evaluate(`(() => {
+    const panel = document.querySelector('.controls');
+    const area = panel.getBoundingClientRect();
+    return panel.scrollHeight > panel.clientHeight && [...document.querySelectorAll('.scoreboard > div')].every(row => {
+      const rect = row.getBoundingClientRect();
+      return rect.top >= area.top && rect.bottom <= area.bottom
+        && row.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2));
+    });
+  })()`), true, 'Scrolling a short sidebar exposes every score above the fixed sound button');
+  const { data: shortScoreImage } = await page.command('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+  await writeFile(join(screenshots, 'freecell-score-short.png'), Buffer.from(shortScoreImage, 'base64'));
   await touchPoint(page, await inputPoint(page, '#sound-toggle'));
   await page.waitFor(`document.querySelector('#sound-toggle').getAttribute('aria-pressed') === '${!originalSound}'`, 'short viewport sound control');
   await touchPoint(page, await inputPoint(page, '#sound-toggle'));
   await page.waitFor(`document.querySelector('#sound-toggle').getAttribute('aria-pressed') === '${originalSound}'`, 'short viewport sound restored');
   await page.command('Emulation.setDeviceMetricsOverride', { width: 844, height: 390, deviceScaleFactor: 1, mobile: true });
   await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
-  await page.evaluate(`document.querySelector('.toolbar').scrollTop = 0`);
+  await page.evaluate(`document.querySelector('.controls').scrollTop = 0`);
   const initialCards = await page.evaluate(`[...document.querySelectorAll('#board [data-card]')].map(card => card.dataset.card)`);
   await dragPointer(page, position('tableau', 0, 6), position('cells', 0), { touch: true, hold: 150 });
+  // 左欄の数値が実際の移動・時計・履歴と連動し、同じ表示を二重生成しないことを確かめる。
+  assert.equal(await textOf(page, '#moves'), '1');
+  assert.equal(await textOf(page, '#progress'), '0');
+  await page.waitFor(`document.querySelector('#time').textContent !== '0:00'`, 'visible sidebar clock starts');
+  await touchPoint(page, await inputPoint(page, position('cells', 0)));
+  await touchPoint(page, await inputPoint(page, position('foundations', 0)));
+  await page.waitFor(`document.querySelector('#progress').textContent === '1'`, 'sidebar home count updates');
+  assert.equal(await textOf(page, '#moves'), '2');
+  await sidebar('live time, moves and home count');
+  const { data: scoreImage } = await page.command('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+  await writeFile(join(screenshots, 'freecell-score-playing.png'), Buffer.from(scoreImage, 'base64'));
+  await touchPoint(page, await inputPoint(page, '#undo'));
+  await page.waitFor(`document.querySelector('#progress').textContent === '0'`, 'sidebar home count undoes');
+  assert.equal(await textOf(page, '#moves'), '1');
   await touchPoint(page, await inputPoint(page, '#undo'));
   await page.waitFor(`document.querySelector('#moves').textContent === '0'`, 'sidebar Undo applied');
   assert.equal(await textOf(page, '#moves'), '0', 'Sidebar Undo must use the existing history');
@@ -958,6 +983,8 @@ async function checkMaximization(page, server, browser, screenshots) {
   await visibleDialog();
   await touchPoint(page, await inputPoint(page, '#confirm-accept'));
   await page.waitFor(`document.querySelector('#moves').textContent === '0'`, 'fullscreen reset accepted');
+  assert.equal(await textOf(page, '#time'), '0:00');
+  assert.equal(await textOf(page, '#progress'), '0');
   assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#board [data-card]')].map(card => card.dataset.card)`), initialCards,
     'Reset in fullscreen restores the same initial deal');
   assert.equal(await page.evaluate(active), true);
@@ -1067,7 +1094,7 @@ async function checkMaximization(page, server, browser, screenshots) {
   await page.navigate(server.url);
   assert.equal(await page.evaluate(`Boolean(document.querySelector('#maximize').getClientRects().length)`), false,
     'The maximize control is hidden in the normal desktop layout');
-  console.log('PASS maximum size: native fullscreen, landscape request/unlock and failure races, left sidebar/reset/new/history, lower-left sound icon/tap/accessibility/short viewport, button/browser/Escape exit, scroll restore, unsupported fallback pinch and zoomed exit');
+  console.log('PASS maximum size: native fullscreen, landscape request/unlock and failure races, left sidebar/reset/new/history, live time/moves/home counts, lower-left sound icon/tap/accessibility/short viewport, button/browser/Escape exit, scroll restore, unsupported fallback pinch and zoomed exit');
 }
 
 /** 二度押しでホームを優先し、移動できない単札だけをフリーセルへ送ることを検証する。 */
@@ -1470,7 +1497,7 @@ async function checkHistoryShortcuts(page, server) {
   console.log('PASS history shortcuts: native Ctrl-Z/Ctrl-Y, history bounds, Alt/input/textarea/select/contenteditable/IME/dialog guards');
 }
 
-/** ネイティブ Web Audio の生成と波形を計測し、控えめな音・許可・消音・保存を確認する。 */
+/** ネイティブ Web Audio の生成と波形を計測し、音量・6 音の完了フレーズ・許可・消音・保存を確認する。 */
 async function checkSound(page, server, engine, browser) {
   const { identifier } = await page.command('Page.addScriptToEvaluateOnNewDocument', {
     source: `(() => {
@@ -1529,7 +1556,7 @@ async function checkSound(page, server, engine, browser) {
     const click = tones.find(tone => tone.frequencies[0]?.value === 600);
     const home = tones.find(tone => tone.frequencies[0]?.value === 900);
     assert.ok(click && home, 'Clicks and placing a card home produce distinct native oscillator tones');
-    for (const [tone, peak, duration] of [[click, .01, .025], [home, .015, .065]]) {
+    for (const [tone, peak, duration] of [[click, .12, .025], [home, .18, .065]]) {
       assert.equal(tone.type, 'sine');
       assert.equal(Math.max(...tone.gain.map(event => event.value)), peak);
       assert.equal(tone.gain[0].value, 0);
@@ -1550,17 +1577,20 @@ async function checkSound(page, server, engine, browser) {
     await page.waitFor(`soundAudit.contexts[0]?.state === 'running'`, 'audio context ready for the final card');
     await pointerClick(page, '[data-card="51"]');
     await pointerClick(page, position('foundations', 3));
-    const fanfare = await page.evaluate('soundAudit.tones.find(tone => tone.frequencies[0]?.value === 660)');
+    const fanfare = await page.evaluate('soundAudit.tones.find(tone => tone.frequencies[0]?.value === 523)');
     assert.ok(fanfare, 'Placing the last card starts a short fanfare');
-    assert.deepEqual(fanfare.frequencies.map(event => event.value), [660, 880, 1320]);
-    assert.ok(Math.abs(fanfare.stops[0] - fanfare.start - .34) < 1e-6);
-    assert.equal(Math.max(...fanfare.gain.map(event => event.value)), .016);
+    assert.deepEqual(fanfare.frequencies.map(event => event.value), [523, 659, 784, 1047, 784, 1568]);
+    assert.ok(Math.abs(fanfare.stops[0] - fanfare.start - .9) < 1e-6);
+    assert.equal(Math.max(...fanfare.gain.map(event => event.value)), .22);
+    assert.equal(fanfare.type, 'triangle');
     for (const [index, note] of fanfare.frequencies.entries()) {
       assert.ok(Math.abs(note.time - fanfare.start - index * .12) < 1e-6);
+      assert.ok(Math.abs(fanfare.gain[index * 3 + 2].time - note.time - (index === 5 ? .3 : .1)) < 1e-6,
+        'The first five notes are short and the final high note rings longer');
     }
     const completedTones = await page.evaluate('soundAudit.tones.length');
     await key(page, 'z', 2);
-    const stoppedFanfare = await page.evaluate('soundAudit.tones.find(tone => tone.frequencies[0]?.value === 660)');
+    const stoppedFanfare = await page.evaluate('soundAudit.tones.find(tone => tone.frequencies[0]?.value === 523)');
     assert.ok(stoppedFanfare.stops.length >= 2 && stoppedFanfare.stops.at(-1) < stoppedFanfare.stops[0],
       'Undo immediately stops the remaining fanfare notes');
     await page.click('#redo');
@@ -1579,9 +1609,9 @@ async function checkSound(page, server, engine, browser) {
       const buffer = await context.startRendering();
       return Math.max(...buffer.getChannelData(0).map(Math.abs));
     }))`);
-    assert.ok(peaks[0] > .005 && peaks[0] <= .01001);
-    assert.ok(peaks[1] > .01 && peaks[1] <= .01501);
-    assert.ok(peaks[2] > .015 && peaks[2] <= .01601);
+    assert.ok(peaks[0] > .11 && peaks[0] <= .12001);
+    assert.ok(peaks[1] > .17 && peaks[1] <= .18001);
+    assert.ok(peaks[2] > .20 && peaks[2] <= .22001);
 
     await pointerClick(page, '#sound-toggle');
     assert.equal(await textOf(page, '#sound-toggle'), ' 音声オフ');
@@ -1625,7 +1655,7 @@ async function checkSound(page, server, engine, browser) {
     await page.command('Page.removeScriptToEvaluateOnNewDocument', { identifier: unsupported.identifier });
     await page.navigate(server.url);
   }
-  console.log('PASS sound: native quiet click/home waveforms, 340 ms brighter rising fanfare only on completion, stop/redo/mute guards, current-state labels, no audio fetch, saved mute');
+  console.log('PASS sound: audible click/home waveforms, 900 ms six-note triangle fanfare only on completion, stop/redo/mute guards, current-state labels, no audio fetch, saved mute');
 }
 
 /** 別の実タブへ切り替え、非表示中は時計が止まり、復帰後に再開することを確認する。 */

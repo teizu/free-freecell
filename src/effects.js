@@ -1,5 +1,5 @@
 /**
- * 音声ファイルを使わない小さな効果音と、クリア後のキングの演出。
+ * 音声ファイルを使わない効果音と、クリア後のキングの演出。
  * ゲーム状態や履歴は変更せず、非表示・動きを減らす設定では演出を止める。
  */
 export function setupEffects(board, button, key) {
@@ -35,7 +35,7 @@ export function setupEffects(board, button, key) {
   }
 
   /**
-   * 小音量の正弦波を鳴らす。クリアは少し大きめの 3 音を約 340ms で軽快に鳴らす。
+   * 操作音は正弦波、クリアは明るい三角波の 6 音を約 900ms で鳴らす。
    * 許可前の音は溜めずに省略し、次の発音やミュートでは予約済みの残音も止める。
    */
   function play(kind = 'click') {
@@ -46,16 +46,18 @@ export function setupEffects(board, button, key) {
     const now = context.currentTime;
     const home = kind === 'home';
     const completed = kind === 'win';
-    // 最後は完全 5 度上へ跳び、最初の音から 1 オクターブ上で終える。
-    const notes = completed ? [660, 880, 1320] : [home ? 900 : 600];
-    const duration = completed ? .1 : home ? .065 : .025;
+    // ド・ミ・ソ・高いド・ソ・高いソ。最後は 1 オクターブ跳び、長く響かせる。
+    const notes = completed ? [523, 659, 784, 1047, 784, 1568] : [home ? 900 : 600];
+    if (completed) oscillator.type = 'triangle';
+    const duration = completed ? .3 : home ? .065 : .025;
     notes.forEach((frequency, index) => {
       const start = now + index * .12;
+      const length = completed && index < notes.length - 1 ? .1 : duration;
       oscillator.frequency.setValueAtTime(frequency, start);
       if (home) oscillator.frequency.linearRampToValueAtTime(1200, start + duration);
       gain.gain.setValueAtTime(0, start);
-      gain.gain.linearRampToValueAtTime(completed ? .016 : home ? .015 : .01, start + .004);
-      gain.gain.linearRampToValueAtTime(0, start + duration);
+      gain.gain.linearRampToValueAtTime(completed ? .22 : home ? .18 : .12, start + .004);
+      gain.gain.linearRampToValueAtTime(0, start + length);
     });
     oscillator.connect(gain).connect(context.destination);
     oscillator.onended = () => {

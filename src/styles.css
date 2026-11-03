@@ -162,9 +162,13 @@ dialog h2 { font-size: 1.2rem; margin-top: 0; }
 /* 最大化では同じ操作ボタンを左へ置き、残りの幅を盤面へ割り当てる。 */
 .maximized { --menu: 124px; overflow: hidden; }
 .maximized > * { visibility: hidden; }
-.maximized .toolbar { visibility: visible; position: fixed; inset: 0 auto 0 0; z-index: 201; width: var(--menu); padding: 8px 8px 56px; flex-flow: column nowrap; justify-content: start; overflow: auto; }
+.maximized .controls { visibility: visible; position: fixed; inset: 0 auto 56px 0; z-index: 201; width: var(--menu); padding: 8px; overflow: auto; }
+.maximized .toolbar { flex-flow: column nowrap; }
+/* 時間・手数・ホーム枚数は既存の表示を縦に並べ、更新処理も通常画面と共有する。 */
+.maximized .scoreboard { flex-direction: column; gap: 0; }
+.maximized .scoreboard > div { justify-content: space-between; }
 .maximized .actions { display: contents; }
-/* 同じ音声ボタンを左下に置く。操作欄の末尾にも余白を取り、低い画面で重ねない。 */
+/* 同じ音声ボタンを左下に置く。操作欄はその上端までに収め、スクロール中も重ねない。 */
 .maximized #sound-toggle { visibility: visible; position: fixed; left: 8px; bottom: 8px; z-index: 202; width: 40px; height: 40px; padding: 0; font-size: 20px; }
 .maximized #sound-toggle span { display: none; }
 /* 確認ダイアログは全画面中も最前面で表示し、リセットの承認・取消を使えるようにする。 */
