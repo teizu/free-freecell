@@ -1,0 +1,182 @@
+/*
+ * FreeCell 初期画面。外部フォントや画像に依存せず、余白と色で盤面を表現する。
+ * この配置見本のスタイルは、操作可能なゲーム盤面の実装時に見直す。
+ */
+:root {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Noto Sans JP", sans-serif;
+  color: #263b32;
+  background: #f6f5ef;
+  line-height: 1.7;
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.site-header,
+main,
+.site-footer {
+  width: min(100% - 2rem, 64rem);
+  margin-inline: auto;
+}
+
+.site-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-block: 1.5rem;
+  border-bottom: 1px solid #d9dfd6;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  color: inherit;
+  font-size: 1.2rem;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.brand-mark {
+  font-size: 1.8rem;
+}
+
+.edition,
+.eyebrow,
+.site-footer {
+  color: #536658;
+  font-size: 0.875rem;
+}
+
+.introduction {
+  padding-block: 2.5rem 1.75rem;
+}
+
+.introduction p {
+  margin-block: 0.5rem;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(2rem, 5vw, 3rem);
+  letter-spacing: 0.06em;
+}
+
+/* 盤面は 8 列を保ち、初期版の見本は狭い画面でも全体を収める。 */
+.game-preview {
+  padding: clamp(1rem, 3vw, 2rem);
+  color: #f2f6ec;
+  background: #214e3c;
+  border-radius: 1rem;
+}
+
+.preview-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+h2 {
+  margin: 0;
+  font-size: 1.125rem;
+}
+
+.status-label {
+  padding: 0.15rem 0.65rem;
+  border: 1px solid #7d9b82;
+  border-radius: 2rem;
+  font-size: 0.75rem;
+}
+
+.preview-note,
+.board-caption {
+  color: #d5e2d5;
+  font-size: 0.875rem;
+}
+
+.board-preview {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(1rem, 3vw, 2rem) 1rem;
+  margin-block: 1.5rem;
+}
+
+.slot-group {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: clamp(0.25rem, 1vw, 0.75rem);
+}
+
+.preview-slot {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 5 / 7;
+  border: 1px solid #6b8c76;
+  border-radius: 0.4rem;
+  color: #aac2af;
+  font-size: clamp(1rem, 3vw, 2rem);
+}
+
+.tableau {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+}
+
+.tableau .preview-slot {
+  border-style: dashed;
+}
+
+.board-caption {
+  margin-bottom: 0;
+  text-align: center;
+}
+
+/* ネイティブの details を使い、マウスとキーボードで同じ説明を開ける。 */
+.rules {
+  margin-block: 1.5rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid #d9dfd6;
+  border-radius: 0.75rem;
+}
+
+summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+
+.rules ol {
+  padding-left: 1.5rem;
+}
+
+.rules li + li {
+  margin-top: 0.5rem;
+}
+
+:focus-visible {
+  outline: 3px solid #8a5d12;
+  outline-offset: 4px;
+}
+
+.site-footer {
+  padding-block: 0.5rem 2rem;
+  text-align: center;
+}
+
+@media (max-width: 35rem) {
+  .site-header {
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+  }
+
+  .edition {
+    font-size: 0.75rem;
+  }
+}

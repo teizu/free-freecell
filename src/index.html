@@ -1,0 +1,54 @@
+<!doctype html>
+<!-- FreeCell の起点。初期版は盤面の配置見本と遊び方だけを表示する。 -->
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="ブラウザーで楽しむフリーセル。現在、ゲームを準備しています。">
+    <meta name="color-scheme" content="light">
+    <title>FreeCell — フリーセル</title>
+    <link rel="stylesheet" href="./styles.css">
+    <script type="module" src="./main.js"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="FreeCell ホーム">
+        <span class="brand-mark" aria-hidden="true">♣</span>
+        <span>FreeCell</span>
+      </a>
+      <span class="edition">ひとりで楽しむ、カードゲーム</span>
+    </header>
+
+    <main>
+      <section class="introduction" aria-labelledby="page-title">
+        <p class="eyebrow">ひと息ついて、次の一手を。</p>
+        <h1 id="page-title">フリーセル</h1>
+        <p>すべてのカードが見えるからこそ、考える楽しさがある。</p>
+      </section>
+
+      <section class="game-preview" aria-labelledby="preview-title">
+        <div class="preview-heading">
+          <h2 id="preview-title">ゲームを準備しています</h2>
+          <span class="status-label">準備中</span>
+        </div>
+        <p class="preview-note">下の盤面は配置の見本です。まだカードを動かして遊ぶことはできません。</p>
+        <!-- 配置見本は操作対象ではないため、読み上げから除外する。 -->
+        <div id="board-preview" class="board-preview" aria-hidden="true"></div>
+        <noscript><p class="preview-note">盤面の見本を表示するには JavaScript を有効にしてください。</p></noscript>
+        <p class="board-caption">4 つのフリーセル · 4 つのホームセル · 8 列の場札</p>
+      </section>
+
+      <details class="rules">
+        <summary>フリーセルの遊び方</summary>
+        <ol>
+          <li>52 枚のカードを、8 列の場札にすべて表向きで配ります。</li>
+          <li>場札は赤と黒を交互に、数字が 1 つずつ小さくなるように重ねます。</li>
+          <li>フリーセルには 1 枚ずつ、一時的にカードを置けます。</li>
+          <li>ホームセルに同じマークを A から K まで順に集め、すべて移せたらクリアです。</li>
+        </ol>
+      </details>
+    </main>
+
+    <footer class="site-footer">自分のペースで、一手ずつ。</footer>
+  </body>
+</html>

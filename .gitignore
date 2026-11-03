@@ -1,0 +1,12 @@
+# ローカル環境の設定と、今後導入する場合の依存・生成物を管理対象から除く。
+.agents/
+.aws/
+.codex/
+.DS_Store
+.env
+.env.*
+!.env.example
+node_modules/
+coverage/
+dist/
+*.log

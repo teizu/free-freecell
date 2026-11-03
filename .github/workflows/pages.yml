@@ -1,0 +1,37 @@
+# src/ の静的ファイルだけを GitHub Pages へ公開する。初期段階は手動起動。
+name: Deploy GitHub Pages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 実行中の公開を中断せず、同時に複数の公開処理を走らせない。
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Upload static files
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: src
+      - name: Deploy Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
