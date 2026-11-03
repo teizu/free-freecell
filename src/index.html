@@ -4,7 +4,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="登録不要のフリーセル。初回の準備が完了すればオフラインでも遊べます。">
+    <meta name="description" content="オフラインでも遊べるフリーセル。">
     <meta name="color-scheme" content="light">
     <meta name="theme-color" content="#214e3c">
     <title>Free-FreeCell</title>
@@ -40,10 +40,11 @@
         </dl>
         <p id="message" class="message" role="status" aria-live="polite" aria-atomic="true">カードを選んでから、移動先を選んでください。</p>
         <div id="win-panel" class="win-panel" hidden>
-          <div><h2>クリア！</h2><p>52 枚すべてがホームセルに揃いました。</p></div>
+          <h2>クリア！</h2>
           <button id="win-new" type="button">もう一局遊ぶ</button>
         </div>
         <div id="board-scroll" class="board-scroll" tabindex="0" role="region" aria-label="盤面">
+          <button id="maximize" type="button" aria-pressed="false">最大化</button>
           <div id="board" class="board"></div>
         </div>
         <p class="board-help">タップでカード → 移動先を選ぶかドラッグ。ダブルクリック・ダブルタップはホーム、次にフリーセルへ。</p>
@@ -57,15 +58,15 @@
       <details class="rules">
         <summary>遊び方と操作</summary>
         <ol>
-          <li>場札は赤と黒を交互に、数字が 1 つずつ小さくなるように重ねます。空の列にはどのカードでも置けます。</li>
-          <li>フリーセルには 1 枚ずつ、一時的にカードを置けます。</li>
+          <li>場札は赤黒交互に 1 つずつ小さく重ねます。空列にはどの札でも置けます。</li>
+          <li>フリーセルには一時的に 1 枚置けます。</li>
           <li>ホームセルは同じマークを A から K の順に集めます。全 52 枚でクリアです。</li>
           <li>赤黒交互の連続札はまとめて動かせます。上限は（空きフリーセル + 1）× 2 の空き列数乗。移動先の空列は数えません。</li>
         </ol>
-        <p>マウスや指でドラッグし、盤面外で離すか Escape で中止します。2 本指で拡大・縮小できます。Tab で札や枠へ移動し、Enter / Space で選択・移動、Escape で選択解除します。</p>
+        <p>ドラッグは盤面外で離すか Escape で中止、2 本指で拡縮できます。Tab で札や枠へ移動し、Enter / Space で選択・移動、Escape で選択解除。</p>
         <p>Ctrl-Z で戻す、Ctrl-Y でやり直す操作ができます（Mac は ⌘ でも可）。</p>
-        <p>「自動」は安全な札をホームへ送ります。チェック時も最初のカード移動は手動で行い、以後は操作後に自動で送ります。A・2、逆色の両ホームが 1 つ下まで揃った札、または逆色が両方 2 つ下・同色の相方が 3 つ下まで揃った札が対象です。「戻す」で 1 枚ずつ取り消せます。</p>
-        <p>進行はブラウザーに保存します。準備完了後はオフラインでも開き直して遊べます。保存データやキャッシュの削除で、進行やオフラインの準備は失われます。</p>
+        <p>「自動」は安全な札をホームへ送ります。チェック時は初手を手動で動かすと、以後の操作後に自動で送ります。対象は A・2、逆色の両ホームが 1 つ下、または逆色両方が 2 つ下・同色の相方が 3 つ下まで揃った札です。「戻す」で 1 枚ずつ取り消せます。</p>
+        <p>進行はブラウザーに保存し、準備完了後はオフラインで開き直せます。保存データやキャッシュの削除で失われます。</p>
         <p>ランダムな配りのため、解けない場合もあります。</p>
       </details>
     </main>

@@ -354,6 +354,7 @@ async function checkBoardBounds(page, label) {
       cardBottom: Math.max(...cards.map(card => card.bottom)),
       width: document.documentElement.clientWidth, height: innerHeight,
       landscape: matchMedia('(orientation: landscape) and (max-height: 500px)').matches,
+      maximized: getComputedStyle(scroll).position === 'fixed',
       scrollTop: scrollRect.top, scrollHeight: scrollRect.height,
       scrollWidth: scroll.scrollWidth, clientWidth: scroll.clientWidth, x: scrollX, y: scrollY, clippedLabels, margins };
   })()`);
@@ -362,7 +363,10 @@ async function checkBoardBounds(page, label) {
     `Board height ${label}: ${JSON.stringify(bounds)}`);
   assert.ok(bounds.scrollWidth <= bounds.clientWidth + 1, `Board horizontal scrolling ${label}: ${JSON.stringify(bounds)}`);
   assert.equal(bounds.x, 0, `Horizontal page scroll ${label}`);
-  if (bounds.landscape) {
+  if (bounds.maximized) {
+    assert.ok(Math.abs(bounds.scrollTop) <= 1 && Math.abs(bounds.scrollHeight - bounds.height) <= 1,
+      `Maximized board uses the entire viewport height ${label}: ${JSON.stringify(bounds)}`);
+  } else if (bounds.landscape) {
     assert.ok(Math.abs(bounds.scrollTop) <= 1 && Math.abs(bounds.scrollHeight - bounds.height) <= 1,
       `Landscape board uses the entire viewport height ${label}: ${JSON.stringify(bounds)}`);
     assert.ok(bounds.y > 0, 'Landscape starts at the board with the menu above it');
@@ -731,6 +735,111 @@ async function checkLandscapeScroll(page, server, engine, browser, screenshots) 
   await page.command('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
   await page.navigate(server.url);
   console.log('PASS landscape: full-height board, equal card margins, two scroll gutters, reachable menu, no forced scrolling, pinch and portrait restoration');
+}
+
+/** 最大化はブラウザーの表示領域内で行い、タップ・拡大・履歴・元のスクロール位置を守る。 */
+async function checkMaximization(page, server, browser, screenshots) {
+  const active = `getComputedStyle(document.querySelector('#board-scroll')).position === 'fixed'`;
+  await page.command('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 2 });
+  await page.command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  await loadFixture(page, orderedGame(), server.url);
+  const networkStart = browser.network.length;
+
+  /** ピンチ後の小さな可視領域も含め、解除ボタンが四辺とも画面内にあることを確かめる。 */
+  async function visibleToggle(label) {
+    const rect = await page.evaluate(`(() => {
+      const button = document.querySelector('#maximize');
+      const box = button.getBoundingClientRect();
+      const view = visualViewport;
+      return { left: box.left - view.offsetLeft, right: box.right - view.offsetLeft,
+        top: box.top - view.offsetTop, bottom: box.bottom - view.offsetTop,
+        width: view.width, height: view.height, visible: Boolean(button.getClientRects().length) };
+    })()`);
+    assert.ok(rect.visible && rect.left >= -1 && rect.top >= -1 && rect.right <= rect.width + 1 && rect.bottom <= rect.height + 1,
+      `Maximize control remains reachable ${label}: ${JSON.stringify(rect)}`);
+  }
+
+  /** 実タップから入退出し、要求したモードへ切り替わるまで待つ。 */
+  async function toggle(expected) {
+    await visibleToggle(expected ? 'before entering' : 'before leaving');
+    await touchPoint(page, await inputPoint(page, '#maximize'));
+    await page.waitFor(expected ? active : `!(${active})`, expected ? 'maximized board' : 'normal board');
+    assert.equal(await textOf(page, '#maximize'), expected ? '解除' : '最大化');
+    assert.equal(await page.evaluate(`document.querySelector('#maximize').getAttribute('aria-pressed')`), String(expected));
+  }
+
+  await page.click('#auto-enabled');
+  await toggle(true);
+  assert.equal(await page.evaluate('Boolean(document.fullscreenElement)'), false, 'Maximum size must keep standard browser pinch available');
+  assert.equal(await textOf(page, '#moves'), '0');
+  assert.equal(await textOf(page, '#time'), '0:00', 'Maximizing must not start an untouched automatic game');
+  await checkBoardBounds(page, 'maximized portrait');
+  assert.equal(await page.evaluate(`(() => {
+    document.querySelector('#new-game').focus();
+    return document.activeElement.id === 'new-game';
+  })()`), false, 'The covered menu must not receive keyboard focus');
+  await toggle(false);
+  await page.click('#auto-enabled');
+
+  // 同じ向きでの解除は元の閲覧位置に戻す。メニュー側へ勝手に戻さない。
+  await page.evaluate('scrollTo(0, 100)');
+  const originalScroll = await page.evaluate('scrollY');
+  await toggle(true);
+  await toggle(false);
+  assert.ok(Math.abs(await page.evaluate('scrollY') - originalScroll) <= 1, 'Leaving maximum size restores the original scroll position');
+  await page.evaluate('scrollTo(0, 0)');
+  await toggle(true);
+  await page.evaluate('window.maximizeNode = document.querySelector("#maximize")');
+  await dragPointer(page, position('tableau', 0, 6), position('cells', 0), { touch: true });
+  assert.equal(await textOf(page, '#moves'), '1', 'Dragging still works in maximum size');
+  assert.equal(await page.evaluate('window.maximizeNode === document.querySelector("#maximize")'), true,
+    'Rendering cards must preserve the live maximize control');
+  await key(page, 'z', 2);
+  assert.equal(await textOf(page, '#moves'), '0');
+  await key(page, 'y', 2);
+  assert.equal(await textOf(page, '#moves'), '1');
+  assert.equal(await page.evaluate(active), true, 'History shortcuts must not leave maximum size');
+  await page.command('Emulation.setDeviceMetricsOverride', { width: 844, height: 390, deviceScaleFactor: 1, mobile: true });
+  await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
+  await checkBoardBounds(page, 'maximized landscape');
+  await visibleToggle('after changing orientation');
+  assert.equal(await textOf(page, '#moves'), '1');
+  const { data } = await page.command('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+  await writeFile(join(screenshots, 'freecell-maximized-landscape.png'), Buffer.from(data, 'base64'));
+  await key(page, 'Escape');
+  await page.waitFor(`!(${active})`, 'Escape leaves maximum size');
+  assert.equal(await textOf(page, '#moves'), '1', 'Leaving maximum size keeps the game and history');
+  await toggle(true);
+  await page.command('Emulation.setTouchEmulationEnabled', { enabled: false });
+  await page.command('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
+  await checkBoardBounds(page, 'maximized after growing the viewport');
+  await visibleToggle('after changing to a large fine-pointer viewport');
+  await pointerClick(page, '#maximize');
+  await page.waitFor(`!(${active})`, 'visible control leaves maximum size on a large screen');
+  assert.equal(browser.network.slice(networkStart).filter(url => new URL(url).pathname !== `${prefix}sw.js`).length, 0,
+    'Maximum size, orientation changes and history controls must not fetch assets');
+
+  await page.command('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 2 });
+  await page.command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  await loadFixture(page, orderedGame(), server.url);
+  const zoomNetworkStart = browser.network.length;
+  await toggle(true);
+  const height = await page.evaluate(`document.querySelector('#board').style.getPropertyValue('--card-height')`);
+  const expanded = await pinch(page, await inputPoint(page, position('tableau', 3, 6)));
+  assert.ok(expanded > 1.2, `Maximum size preserves native pinch: actual scale ${expanded}`);
+  assert.equal(await page.evaluate(`document.querySelector('#board').style.getPropertyValue('--card-height')`), height);
+  await visibleToggle('while zoomed');
+  await toggle(false);
+  assert.ok(Math.abs(await page.evaluate('visualViewport.scale') - expanded) < .01, 'Leaving maximum size preserves the chosen zoom');
+  assert.equal(await textOf(page, '#moves'), '0', 'Pinch and maximum-size controls must not move any card');
+  assert.equal(browser.network.slice(zoomNetworkStart).filter(url => new URL(url).pathname !== `${prefix}sw.js`).length, 0);
+  await page.command('Emulation.setTouchEmulationEnabled', { enabled: false });
+  await page.command('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  await page.navigate(server.url);
+  assert.equal(await page.evaluate(`Boolean(document.querySelector('#maximize').getClientRects().length)`), false,
+    'The maximize control is hidden in the normal desktop layout');
+  console.log('PASS maximum size: mobile tap, viewport coverage, no automatic start, scroll restore, drag/history, orientation/Escape/large-screen exit, pinch and zoomed exit');
 }
 
 /** 二度押しでホームを優先し、移動できない単札だけをフリーセルへ送ることを検証する。 */
@@ -1732,6 +1841,7 @@ async function main() {
     await checkDragAndDrop(page, server, engine, browser);
     await checkPinchZoom(page, server, browser);
     await checkLandscapeScroll(page, server, engine, browser, temp);
+    await checkMaximization(page, server, browser, temp);
     await checkWin(page, server, engine);
     await checkVictoryEffects(page, server, engine, browser);
     await checkStorage(page, server);

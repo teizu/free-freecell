@@ -10,6 +10,7 @@ import { setupEffects } from './effects.js';
 
 const find = (id) => document.getElementById(id);
 const boardElement = find('board');
+const maximize = find('maximize');
 const dialog = find('confirm-dialog');
 const storageKey = `freecell:${new URL('./', location.href).pathname}:v1`;
 const reloadKey = `${storageKey}:reload`;
@@ -25,6 +26,8 @@ let settingError = '';
 let automaticRun = 0;
 let automaticAnimation = null;
 let landscape = false;
+let maximized = false;
+let previousScroll = 0;
 try {
   find('auto-enabled').checked = resumed?.automatic ?? localStorage.getItem(`${storageKey}:auto-home`) === '1';
   if (resumed) localStorage.setItem(`${storageKey}:auto-home`, resumed.automatic ? '1' : '0');
@@ -40,32 +43,52 @@ function announce(message) {
 
 /** 小画面では列の枚数と表示可能な高さから縮め、盤面全体を見渡せるようにする。 */
 function fitBoard() {
+  const view = window.visualViewport;
+  // 拡大・パン中も解除ボタンを可視領域の右上に保ち、タップ領域の大きさを変えない。
+  maximize.style.transform = maximized && view
+    ? `translate(${view.offsetLeft + view.width - innerWidth - 8 / view.scale}px, ${view.offsetTop + 2 / view.scale}px) scale(${1 / view.scale})` : '';
   // ピンチによる拡大は利用者に任せ、拡大中に縮小し直さない。
-  if (window.visualViewport && visualViewport.scale !== 1) return;
+  if (view && view.scale !== 1) return;
   const column = boardElement.querySelector('.column');
   if (!column) return;
   const wide = matchMedia('(orientation: landscape) and (max-height: 500px)').matches;
   if (wide !== landscape) {
     landscape = wide;
     // 横向きに入ったときだけ盤面へ進む。メニューを読むためのスクロールは奪わない。
-    requestAnimationFrame(() => wide ? boardElement.parentElement.scrollIntoView({ block: 'start' }) : scrollTo(0, 0));
+    requestAnimationFrame(() => { if (!maximized) wide ? boardElement.parentElement.scrollIntoView({ block: 'start' }) : scrollTo(0, 0); });
   }
   // 文字の送り幅ではなく全 52 枚共通の枠（574×766）と四辺 2px で大きさを決める。
   // ボタン自身の幅を読むと、再計算するたびに縮むため、列の幅を上限にする。
   const maximum = (column.getBoundingClientRect().width - 4) * 766 / 574 + 4;
-  if (!matchMedia('(max-width: 800px), (max-height: 500px)').matches) {
+  const small = matchMedia('(max-width: 800px), (max-height: 500px)').matches;
+  if (!maximized && !small) {
     boardElement.style.setProperty('--card-height', `${Math.min(142, maximum)}px`);
     boardElement.style.removeProperty('--card-step');
     return;
   }
-  const viewHeight = window.visualViewport?.height ?? innerHeight;
-  const available = wide ? viewHeight : Math.max(80, viewHeight - boardElement.getBoundingClientRect().top - scrollY - 8);
+  const viewHeight = view?.height ?? innerHeight;
+  const available = maximized || wide ? viewHeight : Math.max(80, viewHeight - boardElement.getBoundingClientRect().top - scrollY - 8);
   const steps = Math.max(1, ...getBoard(game).tableau.map((pile) => pile.length - 1));
-  // 固定高 43px を除き、上端のランクと小スートが見える段差（高さの32%+2px）も確保する。
-  const height = Math.max(20, Math.min(maximum, (available - 43 - steps * 2) / (2 + steps * .32)));
-  const step = Math.max(1, Math.min(Math.max(26, height * .32 + 2), (available - 43 - height * 2) / steps));
+  // 見出し・余白・解除ボタンの領域を除き、札の上端のランクと小スートも見える段差を確保する。
+  const fixed = small ? 51 : 87.2;
+  const height = Math.max(20, Math.min(maximum, (available - fixed - steps * 2) / (2 + steps * .32)));
+  const step = Math.max(1, Math.min(Math.max(26, height * .32 + 2), (available - fixed - height * 2) / steps));
   boardElement.style.setProperty('--card-height', `${height}px`);
   boardElement.style.setProperty('--card-step', `${step}px`);
+}
+
+/** 進行を変えず表示だけ切り替える。解除後は元のスクロール位置とボタンへ戻す。 */
+function toggleMaximize() {
+  cancelAutomatic();
+  cancelDrag();
+  if (!maximized) previousScroll = scrollY;
+  maximized = !maximized;
+  document.body.classList.toggle('maximized', maximized);
+  maximize.textContent = maximized ? '解除' : '最大化';
+  maximize.setAttribute('aria-pressed', String(maximized));
+  fitBoard();
+  if (!maximized) scrollTo(0, previousScroll);
+  maximize.focus({ preventScroll: true });
 }
 
 /** 停止や保存の直前に、表示中に経過した単調増加の時間を状態へ反映する。 */
@@ -291,7 +314,7 @@ function tryMove(from, to) {
   else {
     game = result.game;
     if (to.zone === 'foundations') effects.home(isWon(getBoard(game)));
-    finishMove('移動しました。次のカードを選んでください。');
+    finishMove('移動しました。');
   }
 }
 
@@ -417,6 +440,8 @@ find('auto-enabled').addEventListener('change', () => {
 });
 window.addEventListener('resize', () => { cancelAutomatic(); fitBoard(); });
 window.visualViewport?.addEventListener('resize', fitBoard);
+window.visualViewport?.addEventListener('scroll', fitBoard);
+maximize.addEventListener('click', toggleMaximize);
 find('new-game').addEventListener('click', () => replaceGame(false));
 find('win-new').addEventListener('click', () => replaceGame(false));
 find('restart').addEventListener('click', () => replaceGame(true));
@@ -434,6 +459,7 @@ document.addEventListener('keydown', (event) => {
     }
   }
   if (event.key === 'Escape' && !dialog.open) {
+    if (maximized) toggleMaximize();
     lastCardClick = null;
     clearSelection();
   }
