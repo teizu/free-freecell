@@ -315,6 +315,130 @@ async function doublePointer(page, selector, touch = false, exposedEdge = false)
   }
 }
 
+/** 実ポインターで札を動かし、追従表示と終了・中止までをブラウザーに処理させる。 */
+async function dragPointer(page, source, destination, { touch = false, exposedEdge = false, cancel = null, cards = 1 } = {}) {
+  const start = await page.evaluate(`(() => {
+    const rect = document.querySelector(${JSON.stringify(source)}).getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + ${exposedEdge ? '5' : 'rect.height / 2'} };
+  })()`);
+  const end = typeof destination === 'string' ? await page.evaluate(`(() => {
+    const rect = document.querySelector(${JSON.stringify(destination)}).getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  })()`) : destination;
+  if (touch) await page.command('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [start] });
+  else await page.command('Input.dispatchMouseEvent', { type: 'mousePressed', ...start, button: 'left', buttons: 1, clickCount: 1 });
+  for (let step = 1; step <= 4; step += 1) {
+    const point = { x: start.x + (end.x - start.x) * step / 4, y: start.y + (end.y - start.y) * step / 4 };
+    if (touch) await page.command('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [point] });
+    else await page.command('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point, button: 'left', buttons: 1 });
+    await pause(25);
+  }
+  const moving = await page.evaluate(`[...document.querySelectorAll('#board [data-card]')].filter(card => {
+    const style = getComputedStyle(card); return style.transform !== 'none' || style.translate !== 'none';
+  }).length`);
+  assert.equal(moving, cards, 'The full dragged run must visibly follow the pointer');
+  if (cancel === 'Escape') await key(page, 'Escape');
+  if (cancel === 'second-inside' || cancel === 'second-outside') {
+    const second = cancel === 'second-outside' ? { x: 2, y: 2 } : await page.evaluate(`(() => {
+      const rect = document.querySelector(${JSON.stringify(position('tableau', 2, 6))}).getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    })()`);
+    await page.command('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ ...end, id: 0 }, { ...second, id: 1 }] });
+    assert.equal(await page.evaluate(`document.querySelectorAll('#board .dragging').length`), 0,
+      'A second finger must cancel the original drag before either finger is released');
+  }
+  if (touch) await page.command('Input.dispatchTouchEvent', { type: cancel === 'pointercancel' ? 'touchCancel' : 'touchEnd', touchPoints: [] });
+  else await page.command('Input.dispatchMouseEvent', { type: 'mouseReleased', ...end, button: 'left', buttons: 0, clickCount: 1 });
+  await pause(60);
+  assert.equal(await page.evaluate(`document.querySelectorAll('#board [data-card]').length >= 1`), true);
+  assert.equal(await page.evaluate(`[...document.querySelectorAll('#board [data-card]')].some(card => {
+    const style = getComputedStyle(card); return style.transform !== 'none' || style.translate !== 'none';
+  })`), false, 'No dragged card should remain translated after release or cancellation');
+}
+
+/** マウスとタッチのドラッグを通常ルール・履歴・自動処理へ接続して検証する。 */
+async function checkDragAndDrop(page, server, engine, browser) {
+  for (const touch of [false, true]) {
+    const label = touch ? 'touch' : 'mouse';
+    await page.command('Emulation.setDeviceMetricsOverride', { width: touch ? 390 : 1280, height: touch ? 844 : 900, deviceScaleFactor: 1, mobile: touch });
+    await page.command('Emulation.setTouchEmulationEnabled', { enabled: touch, maxTouchPoints: 1 });
+    await loadFixture(page, orderedGame(), server.url);
+    const networkStart = browser.network.length;
+    await dragPointer(page, position('tableau', 0, 6), position('cells', 0), { touch });
+    assert.equal(await textOf(page, '#moves'), '1', `${label}: a drop is one move`);
+    assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('cells', 0))}).dataset.card`), '0');
+    assert.equal(await page.evaluate(`document.querySelectorAll('[aria-pressed="true"]').length`), 0, `${label}: the generated click must not select again`);
+    await page.click('#undo');
+    assert.equal(await textOf(page, '#moves'), '0');
+    await page.click('#redo');
+    assert.equal(await textOf(page, '#moves'), '1');
+    await dragPointer(page, position('tableau', 1, 6), position('cells', 0), { touch });
+    assert.equal(await textOf(page, '#moves'), '1', `${label}: an occupied free cell must reject the drop`);
+    await dragPointer(page, position('cells', 0), position('foundations', 0), { touch });
+    assert.equal(await textOf(page, '#moves'), '2');
+    assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('foundations', 0))}).dataset.card`), '0');
+    assert.equal(browser.network.slice(networkStart).filter(url => new URL(url).pathname !== `${prefix}sw.js`).length, 0,
+      `${label}: dragging must not fetch resources`);
+
+    const single = gameWithTails([[5], [19], [32], [45], [9], [22], [35], [48]]);
+    assert.equal(engine.validateGame(single), true);
+    await loadFixture(page, single, server.url);
+    await dragPointer(page, position('tableau', 0, 6), position('tableau', 1, 6), { touch });
+    assert.equal(await textOf(page, '#moves'), '1');
+    assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('tableau', 1, 7))}).dataset.card`), '5');
+
+    const almostWon = nearWinGame(engine);
+    const board = engine.getBoard(almostWon);
+    const occupied = board.tableau.findIndex(pile => pile.length);
+    const empty = board.tableau.findIndex(pile => !pile.length);
+    await loadFixture(page, almostWon, server.url);
+    await dragPointer(page, position('tableau', occupied, 0), position('tableau', empty), { touch });
+    assert.equal(await textOf(page, '#moves'), '52');
+    assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('tableau', empty, 0))}).dataset.card`), '51');
+
+    const group = gameWithTails([[19, 5], [7], [32], [45], [9], [22], [35], [48]]);
+    assert.equal(engine.validateGame(group), true);
+    await loadFixture(page, group, server.url);
+    await dragPointer(page, position('tableau', 0, 5), position('tableau', 1, 6), { touch, exposedEdge: true, cards: 2 });
+    assert.equal(await textOf(page, '#moves'), '1', `${label}: a two-card run is one move`);
+    assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('tableau', 1, 7))}).dataset.card`), '19');
+    assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('tableau', 1, 8))}).dataset.card`), '5');
+    await page.click('#undo');
+    assert.equal(await textOf(page, '#moves'), '0');
+    await dragPointer(page, position('tableau', 0, 5), position('cells', 0), { touch, exposedEdge: true, cards: 2 });
+    assert.equal(await textOf(page, '#moves'), '0', `${label}: a group cannot enter one free cell`);
+    assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('tableau', 0, 6))}).dataset.card`), '5');
+
+    // 移動先の規則違反・盤外・中止は履歴を作らず、続く通常操作も受け付ける。
+    for (const cancel of ['illegal', 'outside', 'Escape', ...(touch ? ['pointercancel', 'second-inside', 'second-outside'] : [])]) {
+      await loadFixture(page, orderedGame(), server.url);
+      const destination = cancel === 'outside' ? { x: 2, y: 2 }
+        : cancel === 'illegal' ? position('foundations', 1) : position('cells', 0);
+      await dragPointer(page, position('tableau', 0, 6), destination, { touch, cancel });
+      assert.equal(await textOf(page, '#moves'), '0', `${label}: ${cancel} must not move a card`);
+      assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('tableau', 0, 6))}).dataset.card`), '0');
+      await key(page, 'Escape');
+      await page.click(position('tableau', 0, 6));
+      await page.click(position('cells', 0));
+      assert.equal(await textOf(page, '#moves'), '1', `${label}: normal selection still works after ${cancel}`);
+    }
+
+    const reveal = gameWithTails([[11, 0, 19], [6], [32], [45], [7], [20], [33], [46]]);
+    await loadFixture(page, reveal, server.url);
+    await page.click('#auto-enabled');
+    await dragPointer(page, position('tableau', 0, 6), position('cells', 0), { touch });
+    assert.equal(await textOf(page, '#moves'), '2', `${label}: automatic home follows the successful drop`);
+    assert.equal(await textOf(page, '#progress'), '1');
+    await page.click('#undo');
+    assert.equal(await textOf(page, '#moves'), '1');
+    assert.equal(await textOf(page, '#progress'), '0');
+    await page.click('#auto-enabled');
+    console.log(`PASS drag ${label}: free cell/home/tableau, two-card run, illegal/outside/cancel, click suppression, undo/redo, automatic home, no gameplay network`);
+  }
+  await page.command('Emulation.setTouchEmulationEnabled', { enabled: false });
+  await page.command('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+}
+
 /** 二度押しでホームを優先し、移動できない単札だけをフリーセルへ送ることを検証する。 */
 async function checkQuickMove(page, server) {
   await loadFixture(page, orderedGame(), server.url);
@@ -687,7 +811,7 @@ async function prepareUpdate(page, server, temp) {
   const source = join(temp, 'source');
   await cp(join(root, 'src'), source, { recursive: true });
   const css = await readFile(join(source, 'styles.css'), 'utf8');
-  await writeFile(join(source, 'styles.css'), `${css}\n/* Browser update fixture. */\n`);
+  await writeFile(join(source, 'styles.css'), `${css}\n:root { --browser-update-check: 1; }\n`);
   const oldStylesheet = await page.evaluate(`document.querySelector('link[rel="stylesheet"]').href`);
   const originalCaches = await page.evaluate('caches.keys()');
   const updateStart = server.requests.length;
@@ -699,7 +823,7 @@ async function prepareUpdate(page, server, temp) {
   const waitingCaches = await page.evaluate('caches.keys()');
   assert.ok(originalCaches.every((name) => waitingCaches.includes(name)), 'Old cache must remain while the game is open');
   const updateRequests = server.requests.slice(updateStart);
-  assert.ok(updateRequests.every((request) => !/\/(?:game|storage|main|offline)-/.test(request.path)), 'Unchanged JS should be reused from the old application cache');
+  assert.ok(updateRequests.every((request) => !/\/(?:game|storage|main|offline|drag)-/.test(request.path)), 'Unchanged JS should be reused from the old application cache');
   console.log(`Update HTTP: ${updateRequests.length} requests, ${updateRequests.reduce((sum, request) => sum + request.bytes, 0)} body bytes`);
   console.log('PASS update waiting: unchanged JS reused; active game and old cache retained');
   return { oldStylesheet, originalCaches };
@@ -739,6 +863,7 @@ async function main() {
     await checkQuickMove(page, server);
     await checkAutomaticHome(page, server, engine, browser);
     await checkGroupMove(page, server, engine);
+    await checkDragAndDrop(page, server, engine, browser);
     await checkWin(page, server, engine);
     await checkStorage(page, server);
     await checkTouchAndLongColumn(page, server, engine, temp);

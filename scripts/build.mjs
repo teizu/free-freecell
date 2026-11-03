@@ -1,11 +1,23 @@
-/** 依存のない静的ビルド。参照先の内容を含めて URL を更新し、公開容量も検証する。 */
+/** 静的ビルド。ソースの可読性を保ち、配布物の空白・コメントを削減して容量を検証する。 */
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { transformSync } from 'esbuild';
 import { checkSize } from './size.mjs';
 
 const digest = (content) => createHash('sha256').update(content).digest('hex');
+
+/** 正式な構文解析で空白・コメントだけを削減し、日本語や文字列内の改行を維持する。 */
+function compact(content, extension) {
+  if (!['.js', '.css'].includes(extension)) return content;
+  return transformSync(content, {
+    loader: extension.slice(1),
+    minifyWhitespace: true,
+    charset: 'utf8',
+    legalComments: 'none',
+  }).code;
+}
 
 /** 静的な相対参照だけを扱い、循環依存や解決不能な参照は明示的に拒否する。 */
 export async function build(source, destination) {
@@ -51,7 +63,8 @@ export async function build(source, destination) {
     const extension = extname(file);
     let content = inputs.get(file);
     if (['.js', '.css', '.html'].includes(extension)) {
-      content = Buffer.from(rewriteReferences(content.toString('utf8').replaceAll('__FREECELL_BUILD__', 'published'), file));
+      const rewritten = rewriteReferences(content.toString('utf8').replaceAll('__FREECELL_BUILD__', 'published'), file);
+      content = Buffer.from(compact(rewritten, extension));
     }
     const hashed = ['.js', '.css'].includes(extension);
     const output = hashed ? posix.join(posix.dirname(file), `${basename(file, extension)}-${digest(content).slice(0, 12)}${extension}`) : file;
@@ -69,8 +82,10 @@ export async function build(source, destination) {
   if (!template.includes('__FREECELL_VERSION__') || !template.includes('/*__FREECELL_ASSETS__*/ []')) {
     throw new Error('Service Worker のビルド用プレースホルダーがありません。');
   }
-  const version = digest(JSON.stringify(assets) + template).slice(0, 16);
-  outputs.set('sw.js', Buffer.from(template.replace('__FREECELL_VERSION__', version).replace('/*__FREECELL_ASSETS__*/ []', JSON.stringify(assets))));
+  // マニフェストの埋め込み後に変換し、SW 自身の変換結果の違いも版へ反映する。
+  const worker = compact(template.replace('/*__FREECELL_ASSETS__*/ []', JSON.stringify(assets)), '.js');
+  const version = digest(worker).slice(0, 16);
+  outputs.set('sw.js', Buffer.from(worker.replace('__FREECELL_VERSION__', version)));
   await rm(destination, { recursive: true, force: true });
   for (const [file, content] of outputs) {
     const target = resolve(destination, file);

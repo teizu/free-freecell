@@ -71,6 +71,51 @@ test('build hashes imported dependencies, preserves relative URLs and keeps unch
   assert.ok(!(await readdir(output)).includes(firstMain), 'old generated files are removed');
 });
 
+test('build compacts generated code while preserving Japanese, literals and newline semantics', async (t) => {
+  const { source, output } = await fixture(t);
+  const original = [
+    '/** ソースに残す説明コメント。 */',
+    'export const value = `日本語',
+    '  ${"字間"} と /* 文字列 */',
+    '末尾`;',
+    'export const pattern = /\\/\\*日本語\\*\\//u;',
+    'export const url = "https://example.test/日本語";',
+    'export function afterReturn() {',
+    '  return',
+    '  { text: "この改行は変えない" };',
+    '}',
+  ].join('\n');
+  await writeFile(join(source, 'lib/value.js'), original);
+  await writeFile(join(source, 'styles.css'), '/* 配布前の説明 */ body::before { content: "日本語  /* 文字 */"; width: calc(100% - 2rem); }');
+  const result = await build(source, output);
+  const generatedName = result.files.find(name => name.startsWith('lib/value-'));
+  const generated = await readFile(join(output, generatedName), 'utf8');
+  const module = await import(`data:text/javascript;base64,${Buffer.from(generated).toString('base64')}`);
+  assert.equal(module.value, '日本語\n  字間 と /* 文字列 */\n末尾');
+  assert.equal(module.pattern.test('/*日本語*/'), true);
+  assert.equal(module.url, 'https://example.test/日本語');
+  assert.equal(module.afterReturn(), undefined, 'a newline after return remains significant');
+  assert.match(generated, /日本語/);
+  assert.doesNotMatch(generated, /ソースに残す説明/);
+  assert.ok(Buffer.byteLength(generated) < Buffer.byteLength(original));
+  assert.ok(generatedName.includes(hash(generated).slice(0, 12)), 'filenames hash the emitted bytes');
+  assert.equal(await readFile(join(source, 'lib/value.js'), 'utf8'), original);
+  const css = await readFile(join(output, result.files.find(name => name.startsWith('styles-'))), 'utf8');
+  assert.match(css, /日本語  \/\* 文字 \*\//);
+  assert.match(css, /calc\(100% - 2rem\)/);
+  assert.doesNotMatch(css, /配布前の説明/);
+});
+
+test('build rejects invalid syntax before replacing the last complete output', async (t) => {
+  const { source, output } = await fixture(t);
+  const first = await build(source, output);
+  const previous = await readFile(join(output, 'sw.js'), 'utf8');
+  await writeFile(join(source, 'lib/value.js'), 'export const value = ;');
+  await assert.rejects(build(source, output), /Unexpected/);
+  assert.equal(await readFile(join(output, 'sw.js'), 'utf8'), previous);
+  assert.deepEqual((await readdir(output)).sort(), [...new Set(first.files.map(name => name.split('/')[0]))].sort());
+});
+
 test('build rejects circular dependencies, missing references and oversized output', async (t) => {
   const { source, output } = await fixture(t);
   await writeFile(join(source, 'lib/value.js'), 'import "../main.js";');

@@ -37,6 +37,8 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
+      - name: Install build dependency from lockfile
+        run: npm ci
       - name: Test rules and build
         run: npm test
       - name: Build and verify size

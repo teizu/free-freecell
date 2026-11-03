@@ -5,6 +5,7 @@
 import { SUITS, rank, cardLabel, createGame, getBoard, move, quickMove, autoHome, undo, redo, restart, isWon } from './game.js';
 import { loadGame, saveGame } from './storage.js';
 import { setupOffline } from './offline.js';
+import { positionOf, setupDrag } from './drag.js';
 
 const find = (id) => document.getElementById(id);
 const boardElement = find('board');
@@ -157,6 +158,7 @@ function topGroup(board, zone, title) {
 
 /** 盤面を状態から作り直す。フォーカスがあったカードは移動後も追いかける。 */
 function render() {
+  cancelDrag();
   lastCardClick = null;
   const active = document.activeElement;
   const focused = boardElement.contains(active) ? active.dataset : null;
@@ -169,7 +171,8 @@ function render() {
   board.tableau.forEach((cards, index) => {
     const column = document.createElement('div');
     column.className = 'column';
-    column.style.height = `calc(var(--card-height) + ${Math.max(0, cards.length - 1)} * var(--card-step))`;
+    column.dataset.column = index;
+    column.style.minHeight = `calc(var(--card-height) + ${Math.max(0, cards.length - 1)} * var(--card-step))`;
     if (!cards.length) column.append(emptyButton('tableau', index));
     cards.forEach((card, offset) => {
       const button = cardButton(card, 'tableau', index, offset);
@@ -218,6 +221,17 @@ function finishMove(message, automatic = find('auto-enabled').checked) {
   announce(isWon(getBoard(game)) ? 'クリア！ すべてのカードが揃いました。' : message);
 }
 
+/** クリックとドロップで同じ判定・自動移動・保存を使い、不正な移動は選択を維持する。 */
+function tryMove(from, to) {
+  settleTime();
+  const result = move(game, from, to);
+  if (result.error) announce(result.error);
+  else {
+    game = result.game;
+    finishMove('移動しました。次のカードを選んでください。');
+  }
+}
+
 /** クリック・タップ・Enter/Space は、同じボタンの click から処理する。 */
 function choosePosition(event) {
   const button = event.target.closest('button[data-zone]');
@@ -225,8 +239,7 @@ function choosePosition(event) {
     clearSelection();
     return;
   }
-  const position = { zone: button.dataset.zone, index: Number(button.dataset.index) };
-  if (button.dataset.offset !== undefined) position.offset = Number(button.dataset.offset);
+  const position = positionOf(button);
   const card = button.dataset.card;
   const now = performance.now();
   const repeated = card !== undefined && lastCardClick?.card === card && event.detail > 0
@@ -262,14 +275,7 @@ function choosePosition(event) {
     announce(`${cardLabel(Number(button.dataset.card))}${count > 1 ? `から ${count} 枚` : ''}を選択しました。移動先を選んでください。`);
     return;
   }
-  settleTime();
-  const result = move(game, selected, position);
-  if (result.error) {
-    announce(result.error);
-    return;
-  }
-  game = result.game;
-  finishMove('移動しました。次のカードを選んでください。');
+  tryMove(selected, position);
 }
 
 /** 進行中のゲームを置き換える場合だけ、キャンセル可能な確認を表示する。 */
@@ -314,6 +320,16 @@ document.addEventListener('pointerdown', (event) => {
   if (!event.target.closest('#board [data-card]')) lastCardClick = null;
 });
 boardElement.addEventListener('click', choosePosition);
+const cancelDrag = setupDrag(boardElement, {
+  /** 元の選択を押し始めた札に切り替える。移動が確定するまでは履歴を変えない。 */
+  start(from) {
+    lastCardClick = null;
+    selected = from;
+    updateSelection();
+  },
+  drop: tryMove,
+  cancel: clearSelection,
+});
 find('auto-home').addEventListener('click', () => {
   settleTime();
   finishMove('安全に送れるカードはありません。', true);
@@ -362,6 +378,6 @@ setInterval(() => {
 render();
 if (restored.error) announce(restored.error);
 else if (isWon(getBoard(game))) announce('クリア済みのゲームを復元しました。「もう一局遊ぶ」で始められます。');
-else if (restored.game) announce('保存したゲームを復元しました。続きからどうぞ。');
+else if (restored.game) announce('保存したゲームを復元しました。');
 persist();
 setupOffline((status) => { find('offline-status').textContent = status; });

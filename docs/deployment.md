@@ -9,8 +9,9 @@ HTML・CSS・JavaScript を静的に配信し、サーバー側のアプリは�
 この構成は [GitHub Pages の概要](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages) に基づきます。
 
 `npm run build` で生成した `dist/` を GitHub Actions の公開成果物とし、`src/`・`docs/`・リポジトリ全体はアップロードしません。
-ビルドには Node.js 24 だけを使い、外部パッケージのインストールは不要です。
-JS・CSS の参照先を内容ハッシュ付きの相対 URL に変換し、Service Worker の保存対象一覧を生成します。
+ビルドには Node.js 24 と開発依存の esbuild 0.28.2 を使います。初回と依存変更時は `npm ci` で準備し、固定版の指定と `package-lock.json` を維持します。
+公開用 JS・CSS だけの空白・コメントを削減し、内容ハッシュ付きの相対 URL と Service Worker の保存対象一覧を生成します。識別子の短縮や構文の最適化は行わず、日本語は UTF-8 のまま出力します。HTML の空白と `src/` の説明コメントは保ちます。
+esbuild は公開物に含めません。依存の取得後のビルドと、公開・ローカル配布物でのゲーム実行には外部パッケージの取得はありません。
 相対パスにより、ルートサイトとリポジトリ名付きのサブパスの両方に対応します。
 全配布物は **50,000 バイト以下（圧縮前）**とし、ゲームの初回公開前に容量チェックとオフライン動作を確認します。
 計測対象と更新通信の方針は [実装方針](architecture.md) を参照してください。
@@ -25,7 +26,7 @@ JS・CSS の参照先を内容ハッシュ付きの相対 URL に変換し、Ser
 [check.yml](../.github/workflows/check.yml) は PR で同じテストとビルドを行い、公開しません。
 
 設定は [GitHub 公式のカスタムワークフロー手順](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages) を基に、
-checkout → Node.js の準備 → `npm test` → `npm run build` → Pages 設定 → `dist/` のアップロード → deploy の順としています。
+checkout → Node.js の準備 → `npm ci` → `npm test` → `npm run build` → Pages 設定 → `dist/` のアップロード → deploy の順としています。
 公開ジョブには `contents: read`、`pages: write`、`id-token: write` を設定し、`github-pages` 環境を使用します。
 アプリ用の秘密情報や外部 API キーは必要ありません。
 
@@ -57,7 +58,7 @@ git push origin main
 ## サイトを公開するとき
 
 1. GitHub の **Settings → Pages → Build and deployment → Source** を **GitHub Actions** にします。
-2. ローカルで `npm test` と `npm run build` を確認し、コミットを `main` に push します。再公開だけを行う場合は **Actions → Deploy GitHub Pages → Run workflow** で `main` を選んで実行できます。
+2. 初回や依存の変更後は `npm ci` を実行します。ローカルで `npm test` と `npm run build` を確認し、コミットを `main` に push します。再公開だけを行う場合は **Actions → Deploy GitHub Pages → Run workflow** で `main` を選んで実行できます。
 3. 成功した実行の `github-pages` 環境から公開 URL を開き、下記の確認を行います。
 
 ゲームとしての初回公開は、[実装計画](roadmap.md) の受け入れ確認を終えてから行います。

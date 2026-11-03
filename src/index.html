@@ -4,7 +4,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="軽く、静かに遊べるフリーセル。登録不要。初回の準備が完了すればオフラインでも遊べます。">
+    <meta name="description" content="登録不要のフリーセル。初回の準備が完了すればオフラインでも遊べます。">
     <meta name="color-scheme" content="light">
     <meta name="theme-color" content="#214e3c">
     <title>Free-FreeCell</title>
@@ -15,7 +15,6 @@
   <body>
     <header class="site-header">
       <div class="brand"><span aria-hidden="true">♣</span><h1>Free-FreeCell</h1></div>
-      <p class="tagline">ひと息ついて、次の一手を。</p>
     </header>
     <main>
       <section class="game" aria-label="フリーセル">
@@ -40,13 +39,13 @@
         </dl>
         <p id="message" class="message" role="status" aria-live="polite" aria-atomic="true">カードを選んでから、移動先を選んでください。</p>
         <div id="win-panel" class="win-panel" hidden>
-          <div><h2>クリア！</h2><p>52 枚、すべて揃いました。おつかれさまでした。</p></div>
+          <div><h2>クリア！</h2><p>52 枚すべてがホームセルに揃いました。</p></div>
           <button id="win-new" type="button">もう一局遊ぶ</button>
         </div>
         <div id="board-scroll" class="board-scroll" tabindex="0" role="region" aria-label="盤面">
           <div id="board" class="board"></div>
         </div>
-        <p class="board-help">カード → 移動先の順にタップ。ダブルクリック・ダブルタップでホーム優先、次にフリーセルへ。</p>
+        <p class="board-help">カード → 移動先の順にタップ、またはドラッグ。ダブルクリック・ダブルタップでホーム優先、次にフリーセルへ。</p>
         <noscript><p class="message">遊ぶにはブラウザーの JavaScript を有効にしてください。</p></noscript>
       </section>
       <div class="availability">
@@ -61,13 +60,13 @@
           <li>ホームセルには同じマークを A から K まで順に集めます。52 枚すべて移せたらクリアです。</li>
           <li>赤黒交互の連続した並びは、空き枠を使ってまとめて動かせます。上限は（空きフリーセル + 1）× 2 の空き列数乗。空の移動先は空き列数に含みません。</li>
         </ol>
-        <p>Tab でカードや枠へ移動し、Enter / Space で選択・移動、Escape で選択を解除できます。「戻す」「やり直す」も利用できます。</p>
+        <p>マウスや指でカードを移動先へドラッグできます。盤面の外で離すか Escape で中止します。Tab でカードや枠へ移動し、Enter / Space で選択・移動、Escape で選択を解除できます。</p>
         <p>「自動」は安全に送れるカードをホームセルへ移します。「自動で送る」をオンにすると、移動の後にも実行します。A・2 はそのまま、3 以上は逆色の両ホームが 1 つ下の数字まで揃った札を送ります。「戻す」は自動移動も 1 枚ずつ取り消します。</p>
         <p>進行はこのブラウザーに保存します。オフラインの準備が完了した後は、ネット接続なしでも開き直して遊べます。保存データやキャッシュを削除すると、進行やオフラインの準備は失われます。</p>
         <p>配りはランダムです。すべての配りが解けることは保証していません。</p>
       </details>
     </main>
-    <footer class="site-footer">自分のペースで、一手ずつ。</footer>
+    <footer class="site-footer">© 2026 teizu inc.</footer>
     <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-text">
       <form method="dialog">
         <h2 id="confirm-title">ゲームを切り替えますか？</h2>

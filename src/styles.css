@@ -31,7 +31,7 @@ button.primary:hover { background: #163f2e; }
 .brand { display: flex; align-items: center; gap: .6rem; }
 .brand > span { font-size: 2rem; }
 h1 { font-size: 1.35rem; margin: 0; letter-spacing: -.03em; }
-.tagline, .site-footer { color: #536658; font-size: .8rem; }
+.site-footer { color: #536658; font-size: .8rem; }
 .toolbar { display: flex; flex-wrap: wrap; gap: .65rem; justify-content: space-between; }
 .actions { display: flex; gap: .5rem; }
 .auto-toggle { display: flex; align-items: center; gap: .35rem; font-size: .875rem; white-space: nowrap; cursor: pointer; }
@@ -43,6 +43,7 @@ dd { margin: 0; font-size: 1.25rem; font-weight: 650; font-variant-numeric: tabu
 dd small { font-size: .8rem; font-weight: normal; color: #536658; }
 .message { min-height: 3rem; margin: .4rem 0; font-size: .875rem; }
 .board-scroll { max-width: 100%; overflow-x: auto; border-radius: .85rem; background: #214e3c; }
+.board-scroll.drag-active { overflow: visible; }
 .board {
   --card-height: 142px;
   --card-step: 33px;
@@ -54,7 +55,7 @@ dd small { font-size: .8rem; font-weight: normal; color: #536658; }
 }
 .top-group h2 { margin: 0 0 .5rem; color: #dce7d8; font-size: .75rem; font-weight: 500; letter-spacing: .08em; }
 .top-slots { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-.tableau { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 8px; align-items: start; }
+.tableau { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 8px; }
 .column { position: relative; min-width: 0; }
 .card, .empty-slot { width: 100%; height: var(--card-height); padding: 0; border-radius: 6px; }
 .empty-slot {
@@ -73,7 +74,9 @@ dd small { font-size: .8rem; font-weight: normal; color: #536658; }
   background: #fffef8;
   box-shadow: 0 2px 3px #102d3529;
   user-select: none;
+  touch-action: none;
 }
+.card.dragging { pointer-events: none; cursor: grabbing; }
 .card.red { color: #ae343b; }
 .column > .card, .column > .empty-slot { position: absolute; left: 0; }
 .card-corner { position: absolute; left: 8px; top: 3px; font-size: 1.15rem; font-weight: 750; white-space: nowrap; }
@@ -104,7 +107,6 @@ dialog h2 { font-size: 1.2rem; margin-top: 0; }
   .brand { gap: .35rem; }
   .brand > span { font-size: 1.4rem; }
   h1 { font-size: 1.1rem; }
-  .tagline { font-size: .65rem; margin: 0; }
   .toolbar, .actions { gap: .25rem; }
   button { min-height: 30px; padding: .2rem .4rem; font-size: .7rem; }
   .auto-toggle { font-size: .7rem; }
@@ -124,7 +126,4 @@ dialog h2 { font-size: 1.2rem; margin-top: 0; }
   .win-panel { padding: .4rem .6rem; gap: .3rem; margin-bottom: .4rem; }
   .win-panel h2 { font-size: 1rem; }
   .win-panel p { font-size: .65rem; }
-}
-@media (max-width: 480px) {
-  .tagline { display: none; }
 }
