@@ -16,7 +16,9 @@ HTML・CSS・JavaScript の静的サイトとして実装し、サーバーや�
 
 初期セットアップ段階です。`src/` には日本語の案内、盤面の配置見本、遊び方を表示するひな形があります。
 **配札、カード移動、Undo／Redo、保存、オフライン再起動などのゲーム機能は未実装で、まだ遊べません。**
-GitHub のリモートリポジトリ作成、push、実際の Pages 公開は行っていません。
+GitHub リポジトリは [teizu/free-freecell](https://github.com/teizu/free-freecell) です。初回 push は完了しています。
+`origin` は SSH 設定のホスト別名を使った `git@teizu-github:teizu/free-freecell.git` です。
+GitHub Pages の公開先は `https://teizu.github.io/free-freecell/` を予定しています。実際の公開状況は未確認です。
 
 ## ローカルで表示する
 

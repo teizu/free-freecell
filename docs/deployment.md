@@ -3,7 +3,8 @@
 ## 配信対象
 
 GitHub Pages のプロジェクトサイトを使用します。
-公開 URL は通常 `https://<owner>.github.io/<repository>/` となります。
+リポジトリは `teizu/free-freecell` とし、公開予定 URL は `https://teizu.github.io/free-freecell/` です。
+この URL は独自ドメインを使わないプロジェクトサイトの形式から決まるもので、実際の公開状況は未確認です。
 HTML・CSS・JavaScript を静的に配信し、サーバー側のアプリは用意しません。
 この構成は [GitHub Pages の概要](https://docs.github.com/en/pages/getting-started-with-github-pages/what-is-github-pages) に基づきます。
 
@@ -25,26 +26,30 @@ checkout → Pages 設定 → `src/` のアップロード → deploy の順と�
 公開ジョブには `contents: read`、`pages: write`、`id-token: write` を設定し、`github-pages` 環境を使用します。
 アプリ用の秘密情報や外部 API キーは必要ありません。
 
-## GitHub 側で行う作業
+## 設定済みのリポジトリ
 
-以下は今後の公開手順です。現在はリモートリポジトリの作成・push・公開をしていません。
+2026-11-03 にリポジトリの作成と初回 push が完了しています。
 
-1. GitHub にログインし、[新規リポジトリ作成画面](https://github.com/new) を開きます。Owner を選び、Repository name は `freecell` を基本とします。
-2. GitHub Free で Pages を使う場合は **Public** を選びます。この場合、ソースと開発文書も公開されます。Private を選ぶ場合は利用プランが Pages に対応していることを確認します。
-3. README の追加はオフ、`.gitignore` と License は None にして、**Create repository** を押します。テンプレートやコード生成も使用せず、空で作ります。ローカルに履歴があるため、GitHub 側に別の初回コミットを作りません。
-4. 作成後の Quick Setup に表示される接続先 URL をコピーし、ローカルに `origin` を登録して push します。以下の `YOUR_ACCOUNT` は実際の Owner に置き換えます。リポジトリ名を変えた場合は `freecell` も置き換えます。
+| 項目 | 値 |
+| --- | --- |
+| GitHub リポジトリ | [teizu/free-freecell](https://github.com/teizu/free-freecell) |
+| `origin` | `git@teizu-github:teizu/free-freecell.git` |
+| ブランチ | `main`（追跡先: `origin/main`） |
+| ローカルフォルダ | `/home/moto/src/Game/freecell` |
+| Pages の公開予定 URL | `https://teizu.github.io/free-freecell/` |
 
-   ```sh
-   cd /home/moto/src/Game/freecell
-   git remote add origin https://github.com/YOUR_ACCOUNT/freecell.git
-   git push -u origin main
-   ```
+`teizu-github` は利用者の SSH 設定にあるホスト別名です。この接続先を通常の `github.com` に書き換えずに使用します。
+別の端末でこの SSH URL を使う場合は、その端末でも対応する SSH 設定と鍵を用意します。
+ブラウザーから開く URL は `github.com`、サイトの配信先は `teizu.github.io` であり、SSH のホスト別名は使いません。
 
-   HTTPS の認証は Git の認証マネージャーなどを使用します。SSH 鍵の登録済み環境では、代わりに Quick Setup の SSH URL を使えます。
+この作業フォルダでは `origin` と追跡先が設定済みのため、追加の `git remote add` は不要です。
+変更をコミットして GitHub に送る際は、次のコマンドを使います。
 
-5. GitHub で `main` にファイルが表示されることを確認します。リポジトリへの push だけではサイトは公開されません。
+```sh
+git push origin main
+```
 
-作成と push の手順は [GitHub 公式: ローカルコードの追加](https://docs.github.com/en/migrations/importing-source-code/using-the-command-line-to-import-source-code/adding-locally-hosted-code-to-github) に基づきます。
+リポジトリへの push と Pages の公開は別の操作です。現在のワークフローは手動実行時だけ公開します。
 
 ## サイトを公開するとき
 

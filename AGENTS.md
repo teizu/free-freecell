@@ -11,6 +11,13 @@
 測定対象・キャッシュ更新・オフライン利用の限界は [実装方針](docs/architecture.md) を参照する。
 オフライン起動は今後の実装であり、現在の配置見本に実装済みと説明しない。
 
+## リポジトリと公開先
+
+- GitHub リポジトリは `teizu/free-freecell`、ローカルフォルダは `/home/moto/src/Game/freecell`。
+- `origin` は `git@teizu-github:teizu/free-freecell.git`。`teizu-github` は SSH 設定上のホスト別名なので、自動で `github.com` に置き換えない。
+- GitHub Pages の公開予定 URL は `https://teizu.github.io/free-freecell/`。アセットと Service Worker はこのサブパスに対応させる。
+- 実際の公開状況はデプロイ結果で確認し、リポジトリへの push だけで公開済みと判断しない。
+
 ## コードの品質
 
 - ソースコードはシンプルな構造を最優先し、場当たり的な対応より美しい設計、次に可読性を重視する。

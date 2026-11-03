@@ -75,11 +75,11 @@ Service Worker を追加し、起動に必要なファイルをキャッシュ�
 
 ## 段階 5: GitHub Pages での公開確認
 
-公開手順は [deployment.md](deployment.md) に従う。GitHub 上のリポジトリ作成と公開設定は、ローカルの初回コミット後の作業とする。
+公開手順は [deployment.md](deployment.md) に従う。GitHub リポジトリ `teizu/free-freecell` の作成と初回 push は完了している。実際の Pages 公開状況は未確認であり、ゲームの公開確認はこの段階で行う。
 
 受け入れ条件:
 
-- GitHub Pages のプロジェクト URL `https://<owner>.github.io/<repository>/` で CSS と JavaScript が読み込める。
+- GitHub Pages のプロジェクト URL `https://teizu.github.io/free-freecell/` で CSS と JavaScript が読み込める。
 - 公開 URL を直接開く場合と再読み込みする場合の両方で起動する。
 - 公開したページで配り、移動、戻す、やり直す、再開、勝利までを確認する。
 - 公開対象の全ファイルが圧縮前で合計 50,000 バイト以下であり、CI の容量チェックも通っている。
