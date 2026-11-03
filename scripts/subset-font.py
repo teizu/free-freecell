@@ -26,7 +26,9 @@ CARDS = {
 }
 # 空白も含め、CSS の基本行メトリクスが別フォントへフォールバックしないようにする。
 CHARACTERS = SUITS | CARDS | {0x20}
-DESTINATION = Path(__file__).resolve().parent.parent / "src" / "fonts"
+ROOT = Path(__file__).resolve().parent.parent
+DESTINATION = ROOT / "src" / "fonts"
+LICENSE_DESTINATION = ROOT / "docs" / "licenses"
 
 
 def download(name: str) -> bytes:
@@ -43,8 +45,8 @@ def main() -> None:
     """図形と縦メトリクスを保ち、不要な文字とヒンティングだけを取り除く。"""
     original = download("NotoSansSymbols2-Regular.ttf")
     license_text = download("OFL.txt")
-    # OFL は UTF-8 であることを検証し、改行・著作権文を含む元のバイト列を保存する。
-    license_text.decode("utf-8")
+    # OFL 原本は開発資料へ保存し、配布フォント内には著作権・宣言・公式 URL を保つ。
+    copyright_notice = license_text.decode("utf-8").splitlines()[0]
     with TemporaryDirectory(prefix="freecell-font-") as temporary:
         source = Path(temporary) / "source.ttf"
         target = Path(temporary) / "noto-sans-symbols-2-cards.woff2"
@@ -56,6 +58,11 @@ def main() -> None:
         # 著作権・ファミリー名・版・ライセンス URL もフォント内へ保持する。
         options.name_IDs = [0, 1, 2, 3, 4, 5, 6, 13, 14]
         font = subset.load_font(source, options)
+        license_fields = {name_id: font["name"].getDebugName(name_id) for name_id in (0, 13, 14)}
+        if (license_fields[0] != copyright_notice
+                or "SIL Open Font License, Version 1.1" not in (license_fields[13] or "")
+                or license_fields[14] != "https://scripts.sil.org/OFL"):
+            raise ValueError("元フォントの著作権・OFL 宣言・公式 URL を確認できません。")
         subsetter = subset.Subsetter(options=options)
         subsetter.populate(unicodes=CHARACTERS)
         subsetter.subset(font)
@@ -63,10 +70,13 @@ def main() -> None:
         with TTFont(target) as result:
             if set(result.getBestCmap()) != CHARACTERS:
                 raise ValueError("出力された文字一覧が 52 枚・4 スート・空白の 57 文字に一致しません。")
+            if any(result["name"].getDebugName(name_id) != value for name_id, value in license_fields.items()):
+                raise ValueError("出力フォントの著作権・OFL 宣言・公式 URL が変更または欠落しています。")
         content = target.read_bytes()
     DESTINATION.mkdir(parents=True, exist_ok=True)
+    LICENSE_DESTINATION.mkdir(parents=True, exist_ok=True)
     (DESTINATION / target.name).write_bytes(content)
-    (DESTINATION / "OFL.txt").write_bytes(license_text)
+    (LICENSE_DESTINATION / "OFL.txt").write_bytes(license_text)
     print(f"{target.name}: {len(content)} bytes, SHA-256 {sha256(content).hexdigest()}")
 
 

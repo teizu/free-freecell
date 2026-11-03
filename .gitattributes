@@ -1,2 +1,2 @@
 # 上流 OFL の原文と SHA-256 を維持し、このファイルだけ原文の行末空白を許容する。
-src/fonts/OFL.txt text eol=lf whitespace=-blank-at-eol
+docs/licenses/OFL.txt text eol=lf whitespace=-blank-at-eol

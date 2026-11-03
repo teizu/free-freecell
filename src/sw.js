@@ -45,7 +45,7 @@ async function install() {
   try {
     for (const [url, expected] of URLS) {
       let response;
-      // HTML は固定 URL なので旧版を再利用しない。内容付き URL はフォントとライセンスも再利用する。
+      // HTML は固定 URL なので旧版を再利用しない。内容付き URL は同梱フォントも再利用する。
       if (/\-[a-f0-9]{12}\.(js|css|woff2|txt)$/.test(new URL(url).pathname)) {
         for (const name of previous) {
           response = await (await caches.open(name)).match(url);

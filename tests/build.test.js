@@ -71,28 +71,25 @@ test('build hashes imported dependencies, preserves relative URLs and keeps unch
   assert.ok(!(await readdir(output)).includes(firstMain), 'old generated files are removed');
 });
 
-test('フォントのバイナリとライセンスを保ち、変更を CSS・HTML・SW の版へ伝える', async (t) => {
+test('フォントのバイナリと外部ライセンスリンクを保ち、変更を CSS・HTML・SW の版へ伝える', async (t) => {
   const { source, output } = await fixture(t);
   // UTF-8 として読めない値も含め、フォントを文字列へ変換せずコピーすることを確認する。
   const font = Buffer.from([0x77, 0x4f, 0x46, 0x32, 0x00, 0xff, 0x80, 0xc3]);
-  const license = 'Copyright example\n日本語を含むライセンスのテスト用本文。\n';
+  const licenseURL = 'https://openfontlicense.org/open-font-license-official-text/';
   await mkdir(join(source, 'fonts'));
   await writeFile(join(source, 'fonts/suits.woff2'), font);
-  await writeFile(join(source, 'fonts/OFL.txt'), license);
   await writeFile(join(source, 'styles.css'), '@font-face { font-family: "Suit Test"; src: url("./fonts/suits.woff2") format("woff2"); }');
-  await writeFile(join(source, 'index.html'), '<link href="./styles.css"><a href="./fonts/OFL.txt">ライセンス</a><script type="module" src="./main.js"></script>');
+  await writeFile(join(source, 'index.html'), `<link href="./styles.css"><a href="${licenseURL}">ライセンス</a><script type="module" src="./main.js"></script>`);
   const first = await build(source, output);
   const fontName = `fonts/suits-${hash(font).slice(0, 12)}.woff2`;
-  const licenseName = `fonts/OFL-${hash(license).slice(0, 12)}.txt`;
   const firstCSS = first.files.find(name => name.startsWith('styles-'));
   const firstMain = first.files.find(name => name.startsWith('main-'));
   assert.deepEqual(await readFile(join(output, fontName)), font);
-  assert.equal(await readFile(join(output, licenseName), 'utf8'), license);
   assert.ok((await readFile(join(output, firstCSS), 'utf8')).includes(`./${fontName}`));
-  assert.ok((await readFile(join(output, 'index.html'), 'utf8')).includes(`./${licenseName}`));
+  assert.ok((await readFile(join(output, 'index.html'), 'utf8')).includes(`href="${licenseURL}"`));
   const worker = await readFile(join(output, 'sw.js'), 'utf8');
   assert.ok(worker.includes(fontName) && worker.includes(hash(font)));
-  assert.ok(worker.includes(licenseName) && worker.includes(hash(license)));
+  assert.ok(!worker.includes(licenseURL), 'External license pages must not be fetched or cached by the application');
   assert.equal(first.size, await measureSize(output));
 
   const changedFont = Buffer.concat([font, Buffer.from([0xfe])]);
@@ -107,7 +104,7 @@ test('フォントのバイナリとライセンスを保ち、変更を CSS・H
   assert.ok((await readFile(join(output, secondCSS), 'utf8')).includes(`./${secondFont}`));
   assert.ok((await readFile(join(output, 'index.html'), 'utf8')).includes(`./${secondCSS}`));
   assert.equal(second.files.find(name => name.startsWith('main-')), firstMain);
-  assert.ok(second.files.includes(licenseName));
+  assert.ok((await readFile(join(output, 'index.html'), 'utf8')).includes(`href="${licenseURL}"`));
   assert.ok(!(await readdir(join(output, 'fonts'))).includes(fontName.split('/').at(-1)));
 });
 
@@ -249,7 +246,7 @@ test('SW reuses unchanged assets and only deletes this app old caches at activat
   const font = Buffer.from([0x77, 0x4f, 0x46, 0x32, 0xff, 0x00, 0x80]);
   const original = {
     'index.html': 'first', 'main-123456789abc.js': 'shared',
-    'fonts/suits-123456789abc.woff2': font, 'fonts/OFL-123456789abc.txt': 'ライセンス本文',
+    'fonts/suits-123456789abc.woff2': font,
   };
   const shared = new Map([['another-app:v1', new Map()], ['freecell:/different/:old', new Map()]]);
   const old = workerHarness('v1', original, shared);
@@ -262,7 +259,6 @@ test('SW reuses unchanged assets and only deletes this app old caches at activat
   assert.equal(await (await fresh.request('https://example.test/free-freecell/')).text(), 'second');
   fresh.server.clear();
   assert.deepEqual(Buffer.from(await (await fresh.request('https://example.test/free-freecell/fonts/suits-123456789abc.woff2')).arrayBuffer()), font);
-  assert.equal(await (await fresh.request('https://example.test/free-freecell/fonts/OFL-123456789abc.txt')).text(), 'ライセンス本文');
   await fresh.lifecycle('activate');
   assert.equal(shared.has('freecell:/free-freecell/:v1'), false);
   assert.ok(shared.has('another-app:v1'));

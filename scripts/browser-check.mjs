@@ -252,6 +252,10 @@ async function checkCardFont(page, browser, url, label) {
   const fontUrls = [...new Set(browser.network.filter(resource => /\.woff2(?:[?#]|$)/.test(resource)))];
   assert.equal(fontUrls.length, 1, `Only the bundled card font should be requested: ${JSON.stringify(fontUrls)}`);
   assert.ok(new URL(fontUrls[0]).pathname.startsWith(`${prefix}fonts/`));
+  assert.equal(await page.evaluate(`document.querySelector('.site-footer a').href`),
+    'https://openfontlicense.org/open-font-license-official-text/');
+  assert.equal(browser.network.some(resource => /\/OFL[^/]*\.txt(?:[?#]|$)/.test(resource)), false,
+    'The license text is an official external link, not an automatically fetched asset');
   console.log(`PASS font ${label}: all 52 playing-card glyphs and four home suits use ${sample.familyName} (${sample.postScriptName}); Japanese uses system fonts; same-origin WOFF2`);
 }
 
@@ -433,6 +437,7 @@ async function dragPointer(page, source, destination, { touch = false, exposedEd
   if (touch) await page.command('Input.dispatchTouchEvent', { type: cancel === 'pointercancel' ? 'touchCancel' : 'touchEnd', touchPoints: [] });
   else await page.command('Input.dispatchMouseEvent', { type: 'mouseReleased', ...end, button: 'left', buttons: 0, clickCount: 1 });
   await pause(60);
+  await waitAutomatic(page);
   assert.equal(await page.evaluate(`document.querySelectorAll('#board [data-card]').length >= 1`), true);
   assert.equal(await page.evaluate(`[...document.querySelectorAll('#board [data-card]')].some(card => {
     const style = getComputedStyle(card); return style.transform !== 'none' || style.translate !== 'none';
@@ -506,15 +511,15 @@ async function checkDragAndDrop(page, server, engine, browser) {
       assert.equal(await textOf(page, '#moves'), '1', `${label}: normal selection still works after ${cancel}`);
     }
 
-    const reveal = gameWithTails([[11, 0, 19], [6], [32], [45], [7], [20], [33], [46]]);
+    const reveal = gameWithTails([[11, 1, 0, 19], [6], [32], [45], [7], [20], [33], [46]]);
     await loadFixture(page, reveal, server.url);
     await page.click('#auto-enabled');
     await dragPointer(page, position('tableau', 0, 6), position('cells', 0), { touch });
-    assert.equal(await textOf(page, '#moves'), '2', `${label}: automatic home follows the successful drop`);
-    assert.equal(await textOf(page, '#progress'), '1');
+    assert.equal(await textOf(page, '#moves'), '3', `${label}: both automatic cards follow the drop despite its suppressed click`);
+    assert.equal(await textOf(page, '#progress'), '2');
     await page.click('#undo');
-    assert.equal(await textOf(page, '#moves'), '1');
-    assert.equal(await textOf(page, '#progress'), '0');
+    assert.equal(await textOf(page, '#moves'), '2');
+    assert.equal(await textOf(page, '#progress'), '1');
     await page.click('#auto-enabled');
     console.log(`PASS drag ${label}: free cell/home/tableau, two-card run, illegal/outside/cancel, click suppression, undo/redo, automatic home, no gameplay network`);
   }
@@ -670,12 +675,19 @@ function gameWithTails(tails) {
   return { version: 1, history: [{ tableau, cells: Array(4).fill(null), foundations: Array.from({ length: 4 }, () => []) }], cursor: 0, elapsedMs: 0, started: false };
 }
 
+/** 自動送りの表示と期待する履歴位置が揃うまで待ち、固定秒数の待機を避ける。 */
+async function waitAutomatic(page, moves = null) {
+  const expected = moves === null ? 'true' : `document.querySelector('#moves').textContent === '${moves}'`;
+  await page.waitFor(`!document.querySelector('.auto-moving') && (${expected})`, 'automatic move completion');
+}
+
 /** 安全な自動移動、チェック設定の保存、履歴操作時の自動移動抑止を確かめる。 */
 async function checkAutomaticHome(page, server, engine, browser) {
   assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), false, 'Automatic home starts disabled');
   await loadFixture(page, orderedGame(), server.url);
   const requestStart = browser.network.length;
   await page.click('#auto-home');
+  await waitAutomatic(page, 52);
   assert.equal(await textOf(page, '#moves'), '52');
   assert.equal(await textOf(page, '#progress'), '52');
   await page.click('#undo');
@@ -706,6 +718,7 @@ async function checkAutomaticHome(page, server, engine, browser) {
   assert.equal(await textOf(page, '#moves'), '0');
   await page.click(position('tableau', 0, 6));
   await page.click(position('cells', 0));
+  await waitAutomatic(page, 2);
   assert.equal(await textOf(page, '#moves'), '2', 'A successful move triggers the newly exposed safe card');
   assert.equal(await textOf(page, '#progress'), '1');
   await page.click('#undo');
@@ -723,12 +736,109 @@ async function checkAutomaticHome(page, server, engine, browser) {
   assert.equal(await textOf(page, '#progress'), '0');
   await page.click('#auto-enabled');
   await page.click('#auto-enabled');
+  await waitAutomatic(page, 2);
   assert.equal(await textOf(page, '#moves'), '2', 'Enabling the checkbox immediately sends safe cards');
   await page.click('#auto-enabled');
   await page.navigate(server.url);
   assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), false);
   assert.equal(await page.evaluate(`localStorage.getItem(${JSON.stringify(autoStorageKey)})`), '0');
   console.log('PASS automatic home: safe cards only, immediate checkbox action, after-move action, settings restore, independent undo/redo');
+}
+
+/** 自動送りが見える速さで進み、入力・画面切替が古い非同期処理を確実に止めることを確認する。 */
+async function checkAutomaticAnimation(page, server, browser) {
+  await loadFixture(page, orderedGame(), server.url);
+  const animation = await page.evaluate(`(() => {
+    const source = document.querySelector('[data-card="0"]').getBoundingClientRect();
+    const home = document.querySelector('[data-zone="foundations"][data-index="0"]').getBoundingClientRect();
+    document.querySelector('#auto-home').click();
+    const moving = document.querySelector('.auto-moving');
+    const effect = moving?.getAnimations()[0]?.effect;
+    const frames = effect?.getKeyframes();
+    const first = frames ? new DOMMatrix(frames[0].transform) : null;
+    const last = frames ? new DOMMatrix(frames.at(-1).transform) : null;
+    return { duration: effect?.getTiming().duration, zone: moving?.dataset.zone, card: moving?.dataset.card,
+      moves: document.querySelector('#moves').textContent,
+      expected: { x: source.left - home.left, y: source.top - home.top },
+      from: first && { x: first.m41, y: first.m42 }, to: last && { x: last.m41, y: last.m42 } };
+  })()`);
+  assert.equal(animation.duration, 100, 'Each automatic card must have a 100 ms movement animation');
+  assert.equal(animation.zone, 'foundations');
+  assert.equal(animation.card, '0');
+  assert.equal(animation.moves, '1', 'Only the first card may commit before the first animation finishes');
+  assert.deepEqual(animation.to, { x: 0, y: 0 });
+  assert.ok(Math.abs(animation.from.x - animation.expected.x) < 1 && Math.abs(animation.from.y - animation.expected.y) < 1,
+    `The home card must start at its old tableau position: ${JSON.stringify(animation)}`);
+  const interrupted = await page.evaluate(`(() => {
+    const before = Number(document.querySelector('#moves').textContent);
+    document.querySelector('#undo').click();
+    return before - 1;
+  })()`);
+  await pause(350);
+  assert.equal(await textOf(page, '#moves'), String(interrupted), 'Undo must stop all pending automatic moves');
+  assert.equal(await page.evaluate(`document.querySelectorAll('.auto-moving').length`), 0);
+  await page.click('#redo');
+  assert.equal(await textOf(page, '#moves'), String(interrupted + 1), 'Redo restores only one committed automatic card');
+
+  // オン直後の最初の一枚を残し、オフ操作から古いループが再開しない。
+  await loadFixture(page, orderedGame(), server.url);
+  await page.evaluate(`document.querySelector('#auto-enabled').click(); document.querySelector('#auto-enabled').click()`);
+  await pause(350);
+  assert.equal(await textOf(page, '#moves'), '1');
+  assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), false);
+
+  // 確認ダイアログを開くだけで進行を止め、キャンセル・承認のどちらにも古い送りを持ち込まない。
+  await loadFixture(page, orderedGame(), server.url);
+  await page.evaluate(`document.querySelector('#auto-home').click(); document.querySelector('#restart').click()`);
+  assert.equal(await page.evaluate(`document.querySelector('#confirm-dialog').open`), true);
+  await page.click('#confirm-cancel');
+  await pause(350);
+  assert.equal(await textOf(page, '#moves'), '1');
+  await page.click('#restart');
+  await page.click('#confirm-accept');
+  await pause(350);
+  assert.equal(await textOf(page, '#moves'), '0');
+
+  // 実際の pointerdown とキー入力も、一度確定した手数のまま後続を止める。
+  for (const input of ['pointer', 'keyboard']) {
+    await loadFixture(page, orderedGame(), server.url);
+    await page.evaluate(`document.querySelector('#auto-home').click()`);
+    if (input === 'pointer') {
+      await page.command('Input.dispatchMouseEvent', { type: 'mousePressed', x: 2, y: 2, button: 'left', buttons: 1 });
+      await page.command('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 2, y: 2, button: 'left', buttons: 0 });
+    } else await key(page, 'Escape');
+    const stopped = await textOf(page, '#moves');
+    assert.ok(Number(stopped) > 0 && Number(stopped) < 52);
+    await pause(350);
+    assert.equal(await textOf(page, '#moves'), stopped, `${input}: later animation callbacks must not move more cards`);
+  }
+
+  await loadFixture(page, orderedGame(), server.url);
+  await page.evaluate(`document.querySelector('#auto-home').click()`);
+  const background = await browser.page();
+  await background.command('Page.bringToFront');
+  await page.waitFor('document.hidden', 'automatic game hidden');
+  const stopped = await textOf(page, '#moves');
+  await pause(350);
+  assert.equal(await textOf(page, '#moves'), stopped);
+  await page.command('Page.bringToFront');
+  await page.waitFor('!document.hidden', 'automatic game visible');
+  await pause(350);
+  assert.equal(await textOf(page, '#moves'), stopped, 'Returning to the tab must not resume a cancelled sequence');
+  await background.command('Page.close');
+
+  await page.command('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+  try {
+    await loadFixture(page, orderedGame(), server.url);
+    const immediate = await page.evaluate(`(() => {
+      document.querySelector('#auto-home').click();
+      return { moves: document.querySelector('#moves').textContent, animations: document.getAnimations().length };
+    })()`);
+    assert.deepEqual(immediate, { moves: '52', animations: 0 }, 'Reduced motion must send all cards without animation or delay');
+  } finally {
+    await page.command('Emulation.setEmulatedMedia', { features: [] });
+  }
+  console.log('PASS automatic animation: 100 ms tableau-to-home motion, sequential history, interruption by undo/toggle/reset/input/hidden, reduced motion');
 }
 
 /** 選択・拒否・履歴・再配札を操作し、ゲーム中に通信が増えないことも確認する。 */
@@ -785,6 +895,9 @@ async function checkControls(page, server, browser) {
   await checkHiddenClock(page, browser);
   await page.click('#restart');
   assert.equal(await page.evaluate(`document.querySelector('#confirm-dialog').open`), true);
+  assert.equal(await textOf(page, '#confirm-title'), '初期状態にリセットしますか？');
+  assert.equal(await textOf(page, '#confirm-cancel'), 'リセットしない');
+  assert.equal(await textOf(page, '#confirm-accept'), 'リセットする');
   await page.click('#confirm-cancel');
   assert.equal(await textOf(page, '#moves'), '2');
   await page.click('#restart');
@@ -797,6 +910,9 @@ async function checkControls(page, server, browser) {
   await page.click(top);
   await page.click(position('cells', 0));
   await page.click('#new-game');
+  assert.equal(await textOf(page, '#confirm-title'), 'ゲームを切り替えますか？');
+  assert.equal(await textOf(page, '#confirm-cancel'), '続けて遊ぶ');
+  assert.equal(await textOf(page, '#confirm-accept'), '切り替える');
   await page.click('#confirm-cancel');
   assert.equal(await textOf(page, '#moves'), '1');
   await page.click('#new-game');
@@ -911,6 +1027,7 @@ async function checkStorage(page, server) {
     assert.ok((await textOf(page, '#storage-status')).length > 0);
     await page.click('#auto-enabled');
     assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
+    await waitAutomatic(page, 53);
     assert.equal(await textOf(page, '#moves'), '53', 'Automatic home still works when saving its setting fails');
   } finally {
     await page.command('Page.removeScriptToEvaluateOnNewDocument', { identifier });
@@ -1008,7 +1125,7 @@ async function prepareUpdate(page, server, temp) {
   const waitingCaches = await page.evaluate('caches.keys()');
   assert.ok(originalCaches.every((name) => waitingCaches.includes(name)), 'Old cache must remain while the game is open');
   const updateRequests = server.requests.slice(updateStart);
-  assert.ok(updateRequests.every((request) => !/\/(?:game|storage|main|offline|drag)-|\/fonts\//.test(request.path)), 'Unchanged JS, font and license should be reused from the old application cache');
+  assert.ok(updateRequests.every((request) => !/\/(?:game|storage|main|offline|drag)-|\/fonts\//.test(request.path)), 'Unchanged JS and font should be reused from the old application cache');
   console.log(`Update HTTP: ${updateRequests.length} requests, ${updateRequests.reduce((sum, request) => sum + request.bytes, 0)} body bytes`);
   console.log('PASS update waiting: unchanged JS reused; active game and old cache retained');
   return { oldStylesheet, originalCaches };
@@ -1048,6 +1165,7 @@ async function main() {
     await checkControls(page, server, browser);
     await checkQuickMove(page, server);
     await checkAutomaticHome(page, server, engine, browser);
+    await checkAutomaticAnimation(page, server, browser);
     await checkGroupMove(page, server, engine);
     await checkDragAndDrop(page, server, engine, browser);
     await checkPinchZoom(page, server, browser);

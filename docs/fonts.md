@@ -30,7 +30,12 @@ Google Fonts のコミットを `8b0a1d0f5983c89bc2b93f1b5fb55f9e252744b5` に�
 著作権表記は `Copyright 2022 The Noto Project Authors (https://github.com/notofonts/symbols)`。
 [元の OFL](https://github.com/google/fonts/blob/8b0a1d0f5983c89bc2b93f1b5fb55f9e252744b5/ofl/notosanssymbols2/OFL.txt) は SIL Open Font License 1.1 で、著作権表記の後に Reserved Font Name の指定はない。
 文字の削減と形式変更を行うサブセットも同じ OFL 1.1 で配布し、フォント内の著作権・名前・版・ライセンス情報を保持する。
-[src/fonts/OFL.txt](../src/fonts/OFL.txt) に元の著作権表記とライセンス全文をバイト列のまま同梱する。ゲーム本体の著作権表示とは分けて扱う。
+公式 [OFL FAQ 1.10](https://openfontlicense.org/ofl-faq/) は、フォント内のメタデータに公式 OFL へのリンクを含める方式でもライセンス要件を満たすと説明している。全文収録を推奨しているが、このサイトでは容量を優先してリンク方式を採用する。FAQ 2.4 が求める著作権とライセンスのメタデータも保持する。
+
+配布する WOFF2 の `name` テーブルは、ID 0 に元の著作権表記と上流 URL、ID 13 に OFL 1.1 の宣言と公式 URL、ID 14 に公式 URL `https://scripts.sil.org/OFL` を持つ。この元の URL は現在の公式サイト `https://openfontlicense.org/` へ転送されることを確認した（2026-11-03）。元のメタデータとフォントのバイト列は変えない。
+フッターのリンクは [公式ライセンス全文](https://openfontlicense.org/open-font-license-official-text/) を指す。クリックしない限り外部取得は発生せず、ゲームとフォントのオフライン利用も維持する。外部の全文ページを開くときは接続が必要。
+
+取得元の原本は [docs/licenses/OFL.txt](licenses/OFL.txt) にバイト列のまま保存し、開発資料として管理する。`src/` の外に置くため、公開物やオフラインキャッシュには別ファイルとして含めない。ゲーム本体の著作権表示とは分けて扱う。
 
 ## 固定した入力と出力
 
@@ -38,9 +43,9 @@ Google Fonts のコミットを `8b0a1d0f5983c89bc2b93f1b5fb55f9e252744b5` に�
 | --- | ---: | --- |
 | 元の `NotoSansSymbols2-Regular.ttf` | 1,233,128 | `7d5fb73b7ca67a6798101741f5d280a3d016a56a197afcd4199dbb57b4b82a21` |
 | `src/fonts/noto-sans-symbols-2-cards.woff2` | 9,952 | `c4247bce13cb2722614151d7ac9c4e8674254aa66487a1deb8c02081f3ded523` |
-| `src/fonts/OFL.txt` | 4,383 | `b118dd41337806a5d4797052c77caf3bd096aed783e5eb21b4d11154351e1ac0` |
+| `docs/licenses/OFL.txt`（開発資料） | 4,383 | `b118dd41337806a5d4797052c77caf3bd096aed783e5eb21b4d11154351e1ac0` |
 
-フォントとライセンスの合計は **14,335 バイト**。両方とも公開物全体の 50,000 バイト上限に含める。
+公開するフォントは、ライセンスのメタデータを含めて **9,952 バイト**。公開物全体の 50,000 バイト上限に含める。開発資料の OFL 原本は公開対象外で、独立したライセンスファイル 4,383 バイトの取得・キャッシュが不要になる。
 元の大きな TTF は公開物・リポジトリには追加しない。
 
 ## サブセットの再生成
@@ -55,6 +60,6 @@ python3 -m venv /tmp/freecell-font-tools
 ```
 
 初回のパッケージ準備とスクリプトによる公式フォント取得にはネット接続が必要。
-スクリプトは固定 URL と元ファイルの SHA-256 を確認してから、52 枚のトランプ・4 スート・行メトリクス用の空白を生成する。
+スクリプトは固定 URL と元ファイルの SHA-256 を確認してから、52 枚のトランプ・4 スート・行メトリクス用の空白を生成する。生成前後の著作権・OFL 宣言・公式 URL も照合し、メタデータが欠落・変更した場合は出力を採用しない。OFL 原本の出力先は `docs/licenses/` とする。
 日時の再計算を無効にし、同じ版のツールで同じ WOFF2 を再現する。元の縦メトリクスは変更しない。
 更新時は出力の文字一覧、輪郭・送り幅・メトリクス、ライセンス保持、公開物の全体サイズ、実ブラウザーの表示とオフライン読み込みを確認する。

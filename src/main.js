@@ -19,6 +19,8 @@ let replacementPending = false;
 let lastCardClick = null;
 let pointerType = '';
 let settingError = '';
+let automaticRun = 0;
+let automaticAnimation = null;
 try {
   find('auto-enabled').checked = localStorage.getItem(`${storageKey}:auto-home`) === '1';
 } catch {
@@ -211,16 +213,55 @@ function clearSelection() {
   announce('選択を解除しました。');
 }
 
-/** 操作後の自動移動を通常の履歴に積み、表示・保存を一度だけ更新する。 */
-function finishMove(message, automatic = find('auto-enabled').checked) {
-  if (automatic) {
-    const result = autoHome(game);
-    game = result.game;
-    if (result.count) message = `${result.count} 枚を自動でホームセルへ送りました。`;
-  }
+/** 後続の自動移動を止め、確定済みの札はホームの最終位置へ戻す。 */
+function cancelAutomatic() {
+  automaticRun += 1;
+  automaticAnimation?.cancel();
+  automaticAnimation = null;
+  boardElement.querySelector('.auto-moving')?.classList.remove('auto-moving');
+  boardElement.parentElement.classList.remove('auto-active');
+}
+
+/** 1 枚ずつ確定・保存してから短く動かし、入力で中断された古い処理は再開しない。 */
+async function finishMove(message, automatic = find('auto-enabled').checked) {
+  cancelAutomatic();
+  const run = automaticRun;
+  let count = 0;
   selected = null;
   render();
   persist();
+  const animate = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  while (automatic && !document.hidden) {
+    settleTime();
+    const result = autoHome(game, animate ? 1 : 52);
+    if (!result.count) break;
+    const before = getBoard(game);
+    const after = getBoard(result.game);
+    const home = after.foundations.findIndex((pile, index) => pile.length > before.foundations[index].length);
+    const selector = `[data-card="${after.foundations[home].at(-1)}"]`;
+    const from = animate ? boardElement.querySelector(selector).getBoundingClientRect() : null;
+    game = result.game;
+    count += result.count;
+    render();
+    persist();
+    if (animate) {
+      const card = boardElement.querySelector(selector);
+      const to = card.getBoundingClientRect();
+      card.classList.add('auto-moving');
+      boardElement.parentElement.classList.add('auto-active');
+      // 移動後の札を元の位置から描くので、途中で中止しても盤面と履歴が食い違わない。
+      automaticAnimation = card.animate([
+        { transform: `translate(${from.left - to.left}px, ${from.top - to.top}px)` },
+        { transform: 'translate(0, 0)' },
+      ], { duration: 100, easing: 'ease-out' });
+      await automaticAnimation.finished.catch(() => {});
+      if (run !== automaticRun) return;
+      automaticAnimation = null;
+      card.classList.remove('auto-moving');
+      boardElement.parentElement.classList.remove('auto-active');
+    }
+  }
+  if (count) message = `${count} 枚を自動でホームセルへ送りました。`;
   announce(isWon(getBoard(game)) ? 'クリア！ すべてのカードが揃いました。' : message);
 }
 
@@ -284,6 +325,9 @@ function choosePosition(event) {
 /** 進行中のゲームを置き換える場合だけ、キャンセル可能な確認を表示する。 */
 async function confirmReplacement(restarting) {
   if (!game.started || isWon(getBoard(game))) return true;
+  find('confirm-title').textContent = restarting ? '初期状態にリセットしますか？' : 'ゲームを切り替えますか？';
+  find('confirm-cancel').textContent = restarting ? 'リセットしない' : '続けて遊ぶ';
+  find('confirm-accept').textContent = restarting ? 'リセットする' : '切り替える';
   find('confirm-text').textContent = restarting
     ? '同じ配りで最初から始めます。現在の進行と履歴は消えます。'
     : '別の配りで始めます。現在の進行と履歴は消えます。';
@@ -333,6 +377,8 @@ const cancelDrag = setupDrag(boardElement, {
   drop: tryMove,
   cancel: clearSelection,
 });
+// ドラッグ後の疑似 click を除外した後で、利用者の次の入力を優先して自動移動を止める。
+for (const type of ['pointerdown', 'click', 'keydown']) document.addEventListener(type, cancelAutomatic, true);
 find('auto-home').addEventListener('click', () => {
   settleTime();
   finishMove('安全に送れるカードはありません。', true);
@@ -347,7 +393,7 @@ find('auto-enabled').addEventListener('change', () => {
   settleTime();
   finishMove(find('auto-enabled').checked ? '自動移動をオンにしました。' : '自動移動をオフにしました。');
 });
-window.addEventListener('resize', fitBoard);
+window.addEventListener('resize', () => { cancelAutomatic(); fitBoard(); });
 window.visualViewport?.addEventListener('resize', fitBoard);
 find('new-game').addEventListener('click', () => replaceGame(false));
 find('win-new').addEventListener('click', () => replaceGame(false));
@@ -364,10 +410,12 @@ document.addEventListener('click', (event) => {
   if (!event.target.closest('button, summary, dialog, #board')) clearSelection();
 });
 document.addEventListener('visibilitychange', () => {
+  if (document.hidden) cancelAutomatic();
   refreshClock();
   persist();
 });
 window.addEventListener('pagehide', () => {
+  cancelAutomatic();
   settleTime();
   runningSince = null;
   persist();

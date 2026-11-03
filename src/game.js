@@ -131,10 +131,10 @@ export function quickMove(game, from) {
   return index < 0 ? fail('空いているフリーセルがありません。') : move(game, from, { zone: 'cells', index });
 }
 
-/** 後の場札の組み替えを妨げない札だけを、1 枚ずつ履歴へ残してホームに送る。 */
-export function autoHome(game) {
+/** 安全な札を履歴へ残してホームに送る。上限を指定すれば画面で 1 枚ずつ再生できる。 */
+export function autoHome(game, limit = 52) {
   let count = 0;
-  while (true) {
+  while (count < limit) {
     const board = getBoard(game);
     const source = piles(board).find(({ zone, cards }) => {
       if (zone === 'foundations' || !cards.length) return false;
@@ -151,6 +151,7 @@ export function autoHome(game) {
     }).game;
     count += 1;
   }
+  return { game, count };
 }
 
 /** 時計は巻き戻さず、現在の履歴位置だけを 1 手戻す。 */

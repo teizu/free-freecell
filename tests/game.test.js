@@ -296,6 +296,33 @@ test('全 52 枚の自動移動は通常の保存形式のまま勝利・Undo・
   assert.deepEqual(game, original);
 });
 
+test('自動移動を 1 枚ずつ確定しても一括と同じ履歴になり、未実行の手や元の状態を変えない', () => {
+  const initial = createGame(() => 0.5);
+  const deck = Array.from({ length: 52 }, (_, index) => (index % 4) * 13 + 12 - Math.floor(index / 4));
+  initial.history[0].tableau = Array.from({ length: 8 }, (_, column) => deck.filter((_, index) => index % 8 === column));
+  const original = clone(initial);
+  const complete = autoHome(initial);
+  assert.equal(complete.count, 52);
+  assert.deepEqual(initial, original);
+
+  let game = initial;
+  for (let step = 1; step <= 52; step += 1) {
+    const before = clone(game);
+    const result = autoHome(game, 1);
+    assert.equal(result.count, 1);
+    assert.equal(result.game.cursor, step);
+    // アニメーションの中断時に、まだ見せていない未来の手を Redo で実行させない。
+    assert.equal(result.game.history.length, step + 1);
+    assert.deepEqual(result.game.history, complete.game.history.slice(0, step + 1));
+    assert.deepEqual(game, before);
+    game = result.game;
+  }
+  assert.deepEqual(game, complete.game);
+  assert.deepEqual(autoHome(game, 1), { game, count: 0 });
+  assert.equal(autoHome(game, 1).game, game);
+  assert.deepEqual(initial, original);
+});
+
 test('保存の版・位置・時計・開始状態・初期配置の破損を拒否する', () => {
   const game = createGame(() => 0.5);
   for (const change of [

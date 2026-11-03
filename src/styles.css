@@ -57,7 +57,7 @@ dd { margin: 0; font-size: 1.25rem; font-weight: 650; font-variant-numeric: tabu
 dd small { font-size: .8rem; font-weight: normal; color: #536658; }
 .message { min-height: 3rem; margin: .4rem 0; font-size: .875rem; }
 .board-scroll { max-width: 100%; overflow-x: auto; border-radius: .85rem; background: #214e3c; }
-.board-scroll.drag-active { overflow: visible; }
+.board-scroll.drag-active, .board-scroll.auto-active { overflow: visible; }
 .board {
   --card-height: 142px;
   --card-step: calc(var(--card-height) * .32 + 2px);
@@ -93,6 +93,8 @@ dd small { font-size: .8rem; font-weight: normal; color: #536658; }
   overflow: hidden;
 }
 .card.dragging { pointer-events: none; cursor: grabbing; }
+/* 自動で飛ぶ札は盤面より手前へ置き、操作対象は確定済みの盤面にする。 */
+.card.auto-moving { z-index: 100; pointer-events: none; }
 .card.red { color: #ae343b; }
 .column > .card, .column > .empty-slot { position: absolute; left: 0; }
 /* カードの数字・絵札も一文字の図柄に含む。操作文言は端末のフォントを使う。 */
