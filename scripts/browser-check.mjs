@@ -35,9 +35,9 @@ async function startServer(directory) {
     }
     try {
       const data = await readFile(target);
-      const type = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' }[extname(target)] ?? 'application/octet-stream';
+      const type = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.txt': 'text/plain' }[extname(target)] ?? 'application/octet-stream';
       requests.push({ path: pathname, bytes: data.length });
-      response.writeHead(200, { 'Content-Type': `${type}; charset=utf-8`, 'Cache-Control': 'max-age=600' });
+      response.writeHead(200, { 'Content-Type': type.startsWith('font/') ? type : `${type}; charset=utf-8`, 'Cache-Control': 'max-age=600' });
       response.end(data);
     } catch {
       requests.push({ path: pathname, bytes: 0, missing: true });
@@ -121,6 +121,8 @@ async function launchBrowser(profile, offline = false) {
       await command('Page.enable');
       await command('Runtime.enable');
       await command('Network.enable');
+      await command('DOM.enable');
+      await command('CSS.enable');
       return {
         command,
         targetId,
@@ -135,6 +137,7 @@ async function launchBrowser(profile, offline = false) {
           const previous = await this.evaluate('performance.timeOrigin');
           await command('Page.navigate', { url });
           await this.waitFor(`performance.timeOrigin !== ${previous} && document.readyState === 'complete' && document.querySelector('[data-zone="tableau"]')`, 'game page');
+          await this.evaluate('document.fonts.ready.then(() => true)');
         },
         /** 時間ではなく条件の成立を待ち、失敗箇所を明示する。 */
         async waitFor(expression, label, timeout = 15000) {
@@ -198,6 +201,50 @@ async function loadSavedValue(page, value, url) {
   } finally {
     await page.command('Page.removeScriptToEvaluateOnNewDocument', { identifier });
   }
+}
+
+/** CSS の指定名だけでなく、実際の文字描画に使われたフォントを CDP から得る。 */
+async function renderedFonts(page, selector) {
+  const { root: document } = await page.command('DOM.getDocument', { depth: 0 });
+  const { nodeId } = await page.command('DOM.querySelector', { nodeId: document.nodeId, selector });
+  assert.ok(nodeId, `Missing font sample: ${selector}`);
+  return (await page.command('CSS.getPlatformFontsForNode', { nodeId })).fonts;
+}
+
+/** 四つの絵柄の実フォント、数字・日本語のフォールバック、取得元を検証する。 */
+async function checkSymbolFont(page, browser, url, label) {
+  await page.evaluate('document.fonts.ready.then(() => true)');
+  assert.equal(await page.evaluate(`document.fonts.check('16px "Noto Sans Symbols 2"', '♠♣♥♦')`), true);
+  const cards = await page.evaluate(`Array.from({ length: 4 }, (_, suit) =>
+    [...document.querySelectorAll('[data-card]')].find(card => Math.floor(Number(card.dataset.card) / 13) === suit).dataset.card)`);
+  const suits = [];
+  // Chromium の Fontations 使用時は、実フォント名にバックエンド名が付記される。
+  const isNoto = font => /^Noto Sans Symbols 2(?: \(Fontations\))?$/.test(font.familyName);
+  for (const [index, card] of cards.entries()) {
+    const fonts = await renderedFonts(page, `[data-card="${card}"] .card-center`);
+    const custom = fonts.filter(font => font.isCustomFont && font.glyphCount > 0);
+    assert.equal(custom.length, 1, `A suit must use one downloaded font: ${JSON.stringify(fonts)}`);
+    assert.ok(isNoto(custom[0]), `Unexpected suit font: ${JSON.stringify(custom[0])}`);
+    suits.push(custom[0]);
+    const home = await renderedFonts(page, `[data-zone="foundations"][data-index="${index}"]`);
+    assert.ok(home.some(font => font.isCustomFont && isNoto(font) && font.glyphCount > 0),
+      `Home symbol must use the downloaded font: ${JSON.stringify(home)}`);
+  }
+  const corner = await renderedFonts(page, '[data-card="9"] .card-corner');
+  assert.ok(corner.some(font => font.isCustomFont && isNoto(font) && font.glyphCount === 1),
+    `The 10 of spades corner must render its suit with Noto: ${JSON.stringify(corner)}`);
+  assert.ok(corner.some(font => !font.isCustomFont && font.glyphCount >= 2),
+    `The two rank digits must use the system font: ${JSON.stringify(corner)}`);
+  const japanese = await renderedFonts(page, '#message');
+  assert.ok(japanese.length && japanese.every(font => !font.isCustomFont),
+    `Japanese must keep its system fallback: ${JSON.stringify(japanese)}`);
+  const origin = new URL(url).origin;
+  assert.ok(browser.network.filter(resource => /^https?:/.test(resource)).every(resource => new URL(resource).origin === origin),
+    'The app must not fetch resources from an external origin');
+  const fontUrls = [...new Set(browser.network.filter(resource => /\.woff2(?:[?#]|$)/.test(resource)))];
+  assert.equal(fontUrls.length, 1, `Only the bundled suit font should be requested: ${JSON.stringify(fontUrls)}`);
+  assert.ok(new URL(fontUrls[0]).pathname.startsWith(`${prefix}fonts/`));
+  console.log(`PASS font ${label}: four suits rendered by ${suits[0].familyName} (${suits[0].postScriptName}); digits/Japanese use system fonts; same-origin WOFF2`);
 }
 
 /** デスクトップと狭い画面の表示、文字コード、表示文字列を検証する。 */
@@ -823,7 +870,7 @@ async function prepareUpdate(page, server, temp) {
   const waitingCaches = await page.evaluate('caches.keys()');
   assert.ok(originalCaches.every((name) => waitingCaches.includes(name)), 'Old cache must remain while the game is open');
   const updateRequests = server.requests.slice(updateStart);
-  assert.ok(updateRequests.every((request) => !/\/(?:game|storage|main|offline|drag)-/.test(request.path)), 'Unchanged JS should be reused from the old application cache');
+  assert.ok(updateRequests.every((request) => !/\/(?:game|storage|main|offline|drag)-|\/fonts\//.test(request.path)), 'Unchanged JS, font and license should be reused from the old application cache');
   console.log(`Update HTTP: ${updateRequests.length} requests, ${updateRequests.reduce((sum, request) => sum + request.bytes, 0)} body bytes`);
   console.log('PASS update waiting: unchanged JS reused; active game and old cache retained');
   return { oldStylesheet, originalCaches };
@@ -844,6 +891,7 @@ async function main() {
     let page = await browser.page();
     await page.navigate(server.url);
     await page.waitFor(`navigator.serviceWorker.getRegistration().then(registration => Boolean(registration?.active))`, 'active service worker');
+    await checkSymbolFont(page, browser, server.url, 'online');
     const firstRequests = server.requests.slice();
     if (!externalUrl) {
       console.log(`First load HTTP: ${firstRequests.length} requests, ${firstRequests.reduce((sum, request) => sum + request.bytes, 0)} body bytes`);
@@ -902,6 +950,7 @@ async function main() {
     assert.equal(await page.evaluate(`fetch('./offline-probe', { cache: 'no-store' }).then(() => false, () => true)`), true, 'Offline probe must fail');
     assert.equal(await textOf(page, '#moves'), '1');
     assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
+    await checkSymbolFont(page, browser, server.url, 'offline restart');
     await page.click('#undo');
     assert.equal(await textOf(page, '#moves'), '0');
     await page.click('#redo');

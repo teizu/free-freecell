@@ -66,7 +66,7 @@ export async function build(source, destination) {
       const rewritten = rewriteReferences(content.toString('utf8').replaceAll('__FREECELL_BUILD__', 'published'), file);
       content = Buffer.from(compact(rewritten, extension));
     }
-    const hashed = ['.js', '.css'].includes(extension);
+    const hashed = ['.js', '.css', '.woff2', '.txt'].includes(extension);
     const output = hashed ? posix.join(posix.dirname(file), `${basename(file, extension)}-${digest(content).slice(0, 12)}${extension}`) : file;
     names.set(file, output);
     outputs.set(output, content);

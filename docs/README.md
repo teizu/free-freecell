@@ -19,6 +19,7 @@ GitHub Pages でフリーセルを遊べるようにするための、仕様と�
 | [公開手順](deployment.md) | GitHub Pages の設定と自動・手動公開 |
 | [実装計画](roadmap.md) | 段階ごとの成果物と確認条件 |
 | [検証記録](verification.md) | 実行した検証と未確認の範囲 |
+| [フォント管理](fonts.md) | Noto Sans Symbols 2 の出典・ライセンス・再生成 |
 
 ## 今回の成果物
 
@@ -32,7 +33,7 @@ GitHub Pages でフリーセルを遊べるようにするための、仕様と�
 GitHub リポジトリ `teizu/free-freecell` の作成と初回 push は完了しています。
 `origin` は `git@teizu-github:teizu/free-freecell.git` です。[公開サイト](https://teizu.github.io/free-freecell/)とデプロイの成功を確認済みです。
 独自ドメインとソースコードのライセンスは未決定です。
-外部ライブラリ・画像・Web フォントを使用せず、独自ドメインも前提にしません。
+ゲーム実行時に外部のライブラリ・画像・フォントを取得せず、独自ドメインも前提にしません。スート用の Noto Sans Symbols 2 は、必要な文字とライセンスをサイトに同梱しています。
 
 ## 参考資料の扱い
 
