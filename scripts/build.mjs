@@ -11,10 +11,11 @@ import { checkSize } from './size.mjs';
 const digest = (content) => createHash('sha256').update(content).digest('hex');
 
 /** 構文・空白と JS の内部識別子を縮め、公開名と日本語・文字列の意味を維持する。 */
-function compact(content, extension) {
+function compact(content, extension, format) {
   if (!['.js', '.css'].includes(extension)) return content;
   return transformSync(content, {
     loader: extension.slice(1),
+    format,
     minifySyntax: true,
     minifyWhitespace: true,
     // export 名やプロパティ名は保ち、配布 JS 内部の名前だけを短縮する。
@@ -129,7 +130,8 @@ export async function build(source, destination) {
     throw new Error('Service Worker のビルド用プレースホルダーがありません。');
   }
   // マニフェストの埋め込み後に変換し、SW 自身の変換結果の違いも版へ反映する。
-  const worker = compact(template.replace('/*__FREECELL_ASSETS__*/ []', JSON.stringify(assets)), '.js');
+  // SW はイベント登録だけを公開する。内部を関数へ閉じ込め、最上位の名前も短縮できるようにする。
+  const worker = compact(template.replace('/*__FREECELL_ASSETS__*/ []', JSON.stringify(assets)), '.js', 'iife');
   const version = digest(worker).slice(0, 16);
   outputs.set('sw.js', Buffer.from(worker.replace('__FREECELL_VERSION__', version)));
   await rm(destination, { recursive: true, force: true });

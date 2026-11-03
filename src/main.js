@@ -112,6 +112,17 @@ async function toggleMaximize() {
   }
 }
 
+/** 全画面の確定後だけ横向きを要求する。向きの切り替え待ちでも解除は操作できる。 */
+async function syncFullscreen() {
+  setMaximized(Boolean(document.fullscreenElement));
+  try {
+    if (maximized) await screen.orientation?.lock?.('landscape');
+    else screen.orientation?.unlock?.();
+  } catch {
+    // 非対応・拒否・退出による中止では、現在の向きのまま専用レイアウトを使う。
+  }
+}
+
 /** 停止や保存の直前に、表示中に経過した単調増加の時間を状態へ反映する。 */
 function settleTime() {
   if (runningSince !== null) {
@@ -464,7 +475,7 @@ window.visualViewport?.addEventListener('resize', fitBoard);
 window.visualViewport?.addEventListener('scroll', fitBoard);
 maximize.addEventListener('click', toggleMaximize);
 // 戻る・Escape・ブラウザー側の操作で全画面が終了した場合も通常表示へ戻す。
-document.addEventListener('fullscreenchange', () => setMaximized(Boolean(document.fullscreenElement)));
+document.addEventListener('fullscreenchange', syncFullscreen);
 find('new-game').addEventListener('click', () => replaceGame(false));
 find('win-new').addEventListener('click', () => replaceGame(false));
 find('restart').addEventListener('click', () => replaceGame(true));

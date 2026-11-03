@@ -454,7 +454,7 @@ async function doublePointer(page, selector, touch = false, exposedEdge = false)
 }
 
 /** 実ポインターで札を動かし、追従表示と終了・中止までをブラウザーに処理させる。 */
-async function dragPointer(page, source, destination, { touch = false, exposedEdge = false, cancel = null, cards = 1 } = {}) {
+async function dragPointer(page, source, destination, { touch = false, exposedEdge = false, cancel = null, cards = 1, hold = 0 } = {}) {
   const start = await inputPoint(page, source, exposedEdge ? 5 : null);
   const end = typeof destination === 'string' ? await inputPoint(page, destination) : destination;
   if (touch) await page.command('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [start] });
@@ -479,6 +479,8 @@ async function dragPointer(page, source, destination, { touch = false, exposedEd
     assert.equal(await page.evaluate(`document.querySelectorAll('#board .dragging').length`), 0,
       'A second finger must cancel the original drag before either finger is released');
   }
+  // 指を行き先で止める指定がある場合だけ、速いスワイプの慣性判定を避けてから離す。
+  if (hold) await pause(hold);
   if (touch) await page.command('Input.dispatchTouchEvent', { type: cancel === 'pointercancel' ? 'touchCancel' : 'touchEnd', touchPoints: [] });
   else await page.command('Input.dispatchMouseEvent', { type: 'mouseReleased', ...end, button: 'left', buttons: 0, clickCount: 1 });
   await pause(60);
@@ -737,7 +739,7 @@ async function checkLandscapeScroll(page, server, engine, browser, screenshots) 
   console.log('PASS landscape: full-height board, equal card margins, two scroll gutters, reachable menu, no forced scrolling, pinch and portrait restoration');
 }
 
-/** ネイティブ全画面と未対応時の最大化を使い分け、解除・履歴・拡大・通信量を守る。 */
+/** 全画面と横向き要求、左の操作欄、未対応時の最大化、解除・履歴・通信量を守る。 */
 async function checkMaximization(page, server, browser, screenshots) {
   const active = `getComputedStyle(document.querySelector('#board-scroll')).position === 'fixed'`;
   await page.command('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 2 });
@@ -769,6 +771,53 @@ async function checkMaximization(page, server, browser, screenshots) {
     assert.equal(await page.evaluate(`document.querySelector('#maximize').getAttribute('aria-pressed')`), String(expected));
   }
 
+  /** 操作欄が盤面の左に独立し、操作を重複生成せず画面内へ収めることを確かめる。 */
+  async function sidebar(label) {
+    const layout = await page.evaluate(`(() => {
+      const toolbar = document.querySelector('.toolbar');
+      const menu = toolbar.getBoundingClientRect();
+      const board = document.querySelector('#board-scroll').getBoundingClientRect();
+      const controls = [...toolbar.querySelectorAll('button, .auto-toggle')].map(control => {
+        const rect = control.getBoundingClientRect();
+        return { id: control.id || control.className, left: rect.left, right: rect.right,
+          top: rect.top, bottom: rect.bottom, visible: getComputedStyle(control).visibility === 'visible' };
+      });
+      return { menu: { left: menu.left, right: menu.right, top: menu.top, bottom: menu.bottom },
+        boardLeft: board.left, boardRight: board.right, width: innerWidth, height: innerHeight,
+        controls, duplicateControls: ['new-game', 'restart', 'undo', 'redo', 'auto-home', 'auto-enabled']
+          .filter(id => document.querySelectorAll('#' + id).length !== 1) };
+    })()`);
+    assert.ok(layout.menu.left >= -1 && layout.menu.top >= -1 && layout.menu.bottom <= layout.height + 1,
+      `Sidebar bounds ${label}: ${JSON.stringify(layout)}`);
+    assert.ok(layout.menu.right <= layout.boardLeft + 1 && layout.boardLeft > 0 && layout.boardRight <= layout.width + 1,
+      `The menu and narrower board must not overlap ${label}: ${JSON.stringify(layout)}`);
+    assert.ok(layout.controls.every(control => control.visible && control.left >= layout.menu.left - 1
+      && control.right <= layout.menu.right + 1 && control.top >= -1 && control.bottom <= layout.height + 1),
+      `Sidebar controls remain reachable ${label}: ${JSON.stringify(layout)}`);
+    assert.deepEqual(layout.duplicateControls, [], 'Fullscreen must reuse the existing live controls');
+  }
+
+  /** 全画面でも確認文と両ボタンが見え、盤面より手前で実タップを受けることを確かめる。 */
+  async function visibleDialog() {
+    await page.waitFor(`document.querySelector('#confirm-dialog').open`, 'visible fullscreen confirmation');
+    assert.equal(await page.evaluate(`getComputedStyle(document.querySelector('#confirm-dialog')).visibility`), 'visible');
+    for (const selector of ['#confirm-cancel', '#confirm-accept']) {
+      assert.equal(await page.evaluate(`(() => {
+        const button = document.querySelector(${JSON.stringify(selector)});
+        const rect = button.getBoundingClientRect();
+        return rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight
+          && button.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2));
+      })()`), true, `${selector} must be visible and receive taps above the fullscreen board`);
+    }
+  }
+
+  // 向きの要求はモックで順序だけを検証する。実機の物理的な回転とは区別する。
+  await page.evaluate(`window.orientationRequests = []; window.orientationUnlocks = 0;
+    screen.orientation.lock = orientation => {
+      window.orientationRequests.push({ orientation, fullscreen: Boolean(document.fullscreenElement) });
+      return Promise.resolve();
+    };
+    screen.orientation.unlock = () => { window.orientationUnlocks++; }`);
   // 実 API を呼ぶ際のオプションも記録し、ブラウザー UI を隠す要求を確認する。
   await page.evaluate(`window.fullscreenRequests = [];
     document.documentElement.requestFullscreen = function (options) {
@@ -781,12 +830,16 @@ async function checkMaximization(page, server, browser, screenshots) {
   assert.deepEqual(await page.evaluate('window.fullscreenRequests'), [{ navigationUI: 'hide' }]);
   assert.equal(await textOf(page, '#moves'), '0');
   assert.equal(await textOf(page, '#time'), '0:00', 'Maximizing must not start an untouched automatic game');
-  await checkBoardBounds(page, 'maximized portrait');
+  await checkBoardBounds(page, 'maximized portrait fallback');
+  await sidebar('portrait when rotation is unavailable');
+  await page.waitFor('window.orientationRequests.length === 1', 'landscape orientation request');
+  assert.deepEqual(await page.evaluate('window.orientationRequests'), [{ orientation: 'landscape', fullscreen: true }]);
   assert.equal(await page.evaluate(`(() => {
     document.querySelector('#new-game').focus();
     return document.activeElement.id === 'new-game';
-  })()`), false, 'The covered menu must not receive keyboard focus');
+  })()`), true, 'The fullscreen sidebar must remain keyboard accessible');
   await toggle(false);
+  await page.waitFor('window.orientationUnlocks > 0', 'orientation unlock after fullscreen');
   await page.click('#auto-enabled');
   const restoredZoom = await pinch(page, await inputPoint(page, position('tableau', 3, 6)));
   assert.ok(restoredZoom > 1.2, 'Leaving native fullscreen restores standard browser pinch');
@@ -820,6 +873,7 @@ async function checkMaximization(page, server, browser, screenshots) {
   await page.command('Emulation.setDeviceMetricsOverride', { width: 844, height: 390, deviceScaleFactor: 1, mobile: true });
   await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
   await checkBoardBounds(page, 'maximized landscape');
+  await sidebar('landscape');
   await visibleToggle('after changing orientation');
   assert.equal(await textOf(page, '#moves'), '1');
   const { data } = await page.command('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
@@ -839,6 +893,42 @@ async function checkMaximization(page, server, browser, screenshots) {
     'Maximum size, orientation changes and history controls must not fetch assets');
 
   await page.command('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 2 });
+  await page.command('Emulation.setDeviceMetricsOverride', { width: 844, height: 390, deviceScaleFactor: 1, mobile: true });
+  await loadFixture(page, orderedGame(), server.url);
+  // 同じ操作ボタンで履歴と確認を扱い、最大化を解除せずに次の局まで進める。
+  await toggle(true);
+  await sidebar('landscape controls');
+  const initialCards = await page.evaluate(`[...document.querySelectorAll('#board [data-card]')].map(card => card.dataset.card)`);
+  await dragPointer(page, position('tableau', 0, 6), position('cells', 0), { touch: true, hold: 150 });
+  await touchPoint(page, await inputPoint(page, '#undo'));
+  await page.waitFor(`document.querySelector('#moves').textContent === '0'`, 'sidebar Undo applied');
+  assert.equal(await textOf(page, '#moves'), '0', 'Sidebar Undo must use the existing history');
+  await touchPoint(page, await inputPoint(page, '#redo'));
+  await page.waitFor(`document.querySelector('#moves').textContent === '1'`, 'sidebar Redo applied');
+  assert.equal(await textOf(page, '#moves'), '1', 'Sidebar Redo must restore that move');
+  await touchPoint(page, await inputPoint(page, '#restart'));
+  await visibleDialog();
+  await touchPoint(page, await inputPoint(page, '#confirm-cancel'));
+  await page.waitFor(`!document.querySelector('#confirm-dialog').open`, 'fullscreen reset cancelled');
+  assert.equal(await textOf(page, '#moves'), '1');
+  await touchPoint(page, await inputPoint(page, '#restart'));
+  await visibleDialog();
+  await touchPoint(page, await inputPoint(page, '#confirm-accept'));
+  await page.waitFor(`document.querySelector('#moves').textContent === '0'`, 'fullscreen reset accepted');
+  assert.deepEqual(await page.evaluate(`[...document.querySelectorAll('#board [data-card]')].map(card => card.dataset.card)`), initialCards,
+    'Reset in fullscreen restores the same initial deal');
+  assert.equal(await page.evaluate(active), true);
+  await touchPoint(page, await inputPoint(page, '#auto-enabled'));
+  assert.equal(await textOf(page, '#moves'), '0', 'The sidebar automatic checkbox must still wait for the first move');
+  await touchPoint(page, await inputPoint(page, '#auto-enabled'));
+  await dragPointer(page, position('tableau', 0, 6), position('cells', 0), { touch: true, hold: 150 });
+  await touchPoint(page, await inputPoint(page, '#new-game'));
+  await visibleDialog();
+  await touchPoint(page, await inputPoint(page, '#confirm-accept'));
+  await page.waitFor(`document.querySelector('#moves').textContent === '0'`, 'fullscreen new game accepted');
+  assert.notDeepEqual(await page.evaluate(`[...document.querySelectorAll('#board [data-card]')].map(card => card.dataset.card)`), initialCards);
+  assert.equal(await page.evaluate(active), true, 'Reset and new game must preserve the dedicated layout');
+  await toggle(false);
   await page.command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
   await loadFixture(page, orderedGame(), server.url);
   const fallbackNetworkStart = browser.network.length;
@@ -887,6 +977,35 @@ async function checkMaximization(page, server, browser, screenshots) {
   assert.equal(await textOf(page, '#moves'), '0', 'Fullscreen failures and repeated input must not move cards');
   assert.equal(browser.network.slice(fallbackNetworkStart).filter(url => new URL(url).pathname !== `${prefix}sw.js`).length, 0);
 
+  // 向き固定の未対応・拒否・遅延は、全画面と解除ボタンを妨げない。
+  await page.evaluate(`screen.orientation.lock = undefined`);
+  await toggle(true);
+  await sidebar('missing orientation API');
+  await toggle(false);
+  await page.evaluate(`window.orientationFailures = 0;
+    screen.orientation.lock = () => {
+      window.orientationFailures++;
+      return Promise.reject(new Error('Test orientation denial'));
+    }`);
+  await toggle(true);
+  await page.waitFor('window.orientationFailures === 1', 'rejected landscape lock');
+  assert.equal(await page.evaluate('document.fullscreenElement === document.documentElement'), true);
+  await toggle(false);
+  await page.evaluate(`window.orientationUnlocks = 0;
+    screen.orientation.unlock = () => { window.orientationUnlocks++; };
+    screen.orientation.lock = () => new Promise(resolve => { window.finishOrientation = resolve; })`);
+  await toggle(true);
+  await page.waitFor(`typeof window.finishOrientation === 'function'`, 'pending orientation lock');
+  assert.equal(await page.evaluate(`document.querySelector('#maximize').disabled`), false,
+    'A pending rotation must not disable the exit control');
+  await toggle(false);
+  await page.waitFor('window.orientationUnlocks > 0', 'unlock while orientation request is pending');
+  await page.evaluate('window.finishOrientation()');
+  await pause(50);
+  assert.equal(await page.evaluate(active), false, 'A late orientation result must not re-enter maximum size');
+  assert.equal(await page.evaluate('Boolean(document.fullscreenElement)'), false);
+  await page.evaluate('delete screen.orientation.lock; delete screen.orientation.unlock');
+
   // 未対応ブラウザーの経路では従来の標準ピンチと可視領域内の解除ボタンを保つ。
   await page.evaluate(`Object.defineProperty(document, 'fullscreenEnabled', { configurable: true, value: false })`);
   const zoomNetworkStart = browser.network.length;
@@ -905,7 +1024,7 @@ async function checkMaximization(page, server, browser, screenshots) {
   await page.navigate(server.url);
   assert.equal(await page.evaluate(`Boolean(document.querySelector('#maximize').getClientRects().length)`), false,
     'The maximize control is hidden in the normal desktop layout');
-  console.log('PASS maximum size: native fullscreen with hidden navigation, button/browser/Escape exit, no automatic start, scroll restore, drag/history, orientation, request races/denials, unsupported fallback pinch and zoomed exit');
+  console.log('PASS maximum size: native fullscreen, landscape request/unlock and failure races, left sidebar/reset/new/history, button/browser/Escape exit, scroll restore, unsupported fallback pinch and zoomed exit');
 }
 
 /** 二度押しでホームを優先し、移動できない単札だけをフリーセルへ送ることを検証する。 */

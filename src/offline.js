@@ -1,5 +1,8 @@
 /** オフライン準備とクリック更新を扱う。進行の保存は画面側のコールバックへ任せる。 */
 const PUBLISHED = '__FREECELL_BUILD__' === 'published';
+// 同じ失敗理由は共有し、どの更新経路でも同じ案内にする。
+const SAVE_ERROR = '進行を保存できないため更新を中止しました。この画面で続けられます。';
+const UPDATE_ERROR = '更新を適用できませんでした。もう一度お試しください。';
 
 /** 新版を待機させ、保存できたタブだけが利用者の操作で再読み込みする。 */
 export async function setupOffline(onStatus, button, prepareUpdate) {
@@ -45,7 +48,7 @@ export async function setupOffline(onStatus, button, prepareUpdate) {
       if (!requested || reloading) return;
       changed = true;
       if (!prepareUpdate(true)) {
-        failed('進行を保存できないため更新を中止しました。この画面で続けられます。');
+        failed(SAVE_ERROR);
         return;
       }
       reloading = true;
@@ -77,7 +80,7 @@ export async function setupOffline(onStatus, button, prepareUpdate) {
     button.addEventListener('click', () => {
       if (requested) return;
       if (!prepareUpdate(false)) {
-        failed('進行を保存できないため更新を中止しました。この画面で続けられます。');
+        failed(SAVE_ERROR);
         return;
       }
       requested = true;
@@ -92,15 +95,15 @@ export async function setupOffline(onStatus, button, prepareUpdate) {
       waiting.addEventListener('statechange', () => {
         if (waitingFor !== waiting) return;
         if (waiting.state === 'activated') reload();
-        else if (waiting.state === 'redundant') failed('更新を適用できませんでした。もう一度お試しください。');
+        else if (waiting.state === 'redundant') failed(UPDATE_ERROR);
       });
       timeout = setTimeout(() => {
-        if (waitingFor === waiting) failed('更新を適用できませんでした。もう一度お試しください。');
+        if (waitingFor === waiting) failed(UPDATE_ERROR);
       }, 10000);
       try {
         waiting.postMessage({ type: 'APPLY_UPDATE' });
       } catch {
-        failed('更新を適用できませんでした。もう一度お試しください。');
+        failed(UPDATE_ERROR);
       }
     });
     observe(registration.waiting ?? registration.installing);

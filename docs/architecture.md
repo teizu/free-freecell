@@ -97,7 +97,11 @@ Ctrl／Meta-Z と Ctrl／Meta-Y はボタンと同じ履歴操作へ渡します
 
 最大化は `body.maximized` と固定配置の `#board-scroll` を共通の表示にし、対応環境では実入力から `document.documentElement.requestFullscreen({ navigationUI: 'hide' })` を呼びます。アドレスバーを含むブラウザー UI の非表示を要求し、非対応・開始拒否時はページ内最大化を維持します。`fullscreenchange` で実際の状態を反映するため、戻る・Escape・ブラウザー側の終了操作でも通常表示へ復帰します。非同期の入退出中はボタンを無効にし、退出が拒否された場合は表示を維持して再試行可能にします。全画面の通知が重なっても元のスクロール位置を上書きしません。
 
-全画面中の標準ピンチはブラウザーによって制限されます。独自の拡縮は追加せず、通常表示へ戻せば標準ピンチを使えます。API と制約は [requestFullscreen](https://developer.mozilla.org/en-US/docs/Web/API/Element/requestFullscreen) と [モバイルでの拡縮制限](https://developer.mozilla.org/en-US/docs/Web/API/Fullscreen_API/Guide#viewport_scaling_in_mobile_browsers) を参照します。`#maximize` はカード再描画の外へ置き、VisualViewport の位置と倍率で右上へ追従させます。背後の要素は visibility で非表示にし、Tab やタップの対象から外しつつページ高を保ちます。切り替え時にドラッグと後続の自動移動を止め、進行や履歴を変えず再計算します。解除時は元のスクロール位置へ戻します。
+`fullscreenchange` で全画面を確認してから `screen.orientation.lock('landscape')` を要求し、終了時は `unlock()` を呼びます。向き固定は全画面の入退出処理から分け、未対応・拒否・待機中でも解除を使えます。結果通知で表示状態を書き戻さず、実際の回転による resize で盤面を再計算します。[Screen Orientation API](https://developer.mozilla.org/en-US/docs/Web/API/ScreenOrientation/lock) と [全画面終了時の固定解除](https://w3c.github.io/screen-orientation/#fullscreen-interaction) に従います。
+
+最大化中の `.toolbar` を幅 124px の左操作欄にし、`#board-scroll` は同じ CSS 変数の幅だけ左端を空けます。既存のボタンとイベントを再利用するため、履歴・自動設定・確認処理は通常画面と共通です。操作欄は縦スクロール可能にし、確認ダイアログも明示的に可視化します。
+
+全画面中の標準ピンチはブラウザーによって制限されます。独自の拡縮は追加せず、通常表示へ戻せば標準ピンチを使えます。API と制約は [requestFullscreen](https://developer.mozilla.org/en-US/docs/Web/API/Element/requestFullscreen) と [モバイルでの拡縮制限](https://developer.mozilla.org/en-US/docs/Web/API/Fullscreen_API/Guide#viewport_scaling_in_mobile_browsers) を参照します。`#maximize` はカード再描画の外へ置き、VisualViewport の位置と倍率で右上へ追従させます。背後の要素は visibility で非表示にし、盤面・左操作欄・確認ダイアログだけを操作対象に保ちつつページ高を維持します。切り替え時にドラッグと後続の自動移動を止め、進行や履歴を変えず再計算します。解除時は元のスクロール位置へ戻します。
 
 幅 800 CSS px 以下、または高さ 500 CSS px 以下では、8 列と上段の全セルを横スクロールなしで並べます。
 CSS で間隔・見出し・操作ボタンを縮め、JavaScript で表示領域の高さ、盤面の開始位置、最長列からカード高と重なり幅を計算します。
@@ -149,6 +153,7 @@ JS・CSS は内容が変わった場合だけ URL を変更し、同じ内容を
 初回表示とキャッシュ準備で同じファイルを二重に取得していないかも実測します。
 
 ビルドでは JS・CSS の参照先を先に変換し、空白・コメント・構文の短縮と JS の内部名短縮を行った内容からファイル名を決めます。
+Service Worker はイベント登録だけを外部へ公開するため、ビルド時に IIFE へ閉じ込めて最上位の識別子も短縮します。ES Modules の構成と資産ごとのキャッシュは維持します。
 Service Worker の URL は `sw.js` のままにし、内部に版と公開ファイルの SHA-256 一覧を埋め込みます。
 インストール時は、まず変更のないファイルを既存キャッシュから探し、初回表示の HTTP キャッシュも再利用します。
 全ファイルの内容が一覧と一致したときだけ準備完了とし、CDN の更新途中などで版が揃わない場合は新版を有効にしません。

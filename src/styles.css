@@ -159,10 +159,14 @@ dialog h2 { font-size: 1.2rem; margin-top: 0; }
   .win-panel { padding: .4rem .6rem; gap: .3rem; margin-bottom: .4rem; }
   .win-panel h2 { font-size: 1rem; }
 }
-/* 最大化中もピンチを保ち、背後のメニューはフォーカス・タップの対象から外す。 */
-.maximized { overflow: hidden; }
+/* 最大化では同じ操作ボタンを左へ置き、残りの幅を盤面へ割り当てる。 */
+.maximized { --menu: 124px; overflow: hidden; }
 .maximized > * { visibility: hidden; }
-.maximized #board-scroll { visibility: visible; position: fixed; inset: 0; z-index: 200; width: 100%; height: 100dvh; margin: 0; border-radius: 0; }
+.maximized .toolbar { visibility: visible; position: fixed; inset: 0 auto 0 0; z-index: 201; width: var(--menu); padding: 8px; flex-flow: column nowrap; justify-content: start; overflow: auto; }
+.maximized .actions { display: contents; }
+/* 確認ダイアログは全画面中も最前面で表示し、リセットの承認・取消を使えるようにする。 */
+.maximized dialog { visibility: visible; }
+.maximized #board-scroll { visibility: visible; position: fixed; inset: 0 0 0 var(--menu); z-index: 200; width: auto; height: 100dvh; margin: 0; border-radius: 0; }
 .maximized #board { padding-top: 16px; }
 .maximized #maximize { display: block; top: 0; right: 0; transform-origin: 100% 0; }
 /* 横向きの低い画面は盤面だけで表示高を使う。左右の空白からメニューへスクロールできる。 */

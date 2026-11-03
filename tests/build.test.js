@@ -266,8 +266,16 @@ test('build rejects circular dependencies, missing references and oversized outp
   await assert.rejects(build(source, source), /別のフォルダ/);
 });
 
-/** CacheStorage とイベントを模した最小環境で、SW の版切り替えを実行する。 */
+/** ソースの SW へ版と資産を埋め込み、未ビルドの境界条件を独立して検証する。 */
 function workerHarness(version, files, shared = new Map(), server = new Map(Object.entries(files)), httpCache = new Map()) {
+  const manifest = Object.entries(files).map(([name, body]) => [name, hash(body)]);
+  const script = swTemplate.replace('__FREECELL_VERSION__', version)
+    .replace('/*__FREECELL_ASSETS__*/ []', JSON.stringify(manifest));
+  return runWorker(script, files, shared, server, httpCache);
+}
+
+/** 同じ模擬環境でソース・配布済み双方の classic SW を実行し、登録したイベントを操作する。 */
+function runWorker(script, files, shared = new Map(), server = new Map(Object.entries(files)), httpCache = new Map()) {
   const base = 'https://example.test/free-freecell/';
   const listeners = new Map();
   const fetched = [];
@@ -302,8 +310,7 @@ function workerHarness(version, files, shared = new Map(), server = new Map(Obje
       return new Response(body);
     },
   });
-  const manifest = Object.entries(files).map(([name, body]) => [name, hash(body)]);
-  vm.runInContext(swTemplate.replace('__FREECELL_VERSION__', version).replace('/*__FREECELL_ASSETS__*/ []', JSON.stringify(manifest)), context);
+  vm.runInContext(script, context);
   return {
     shared, server, fetched, clients,
     get skipped() { return skipped; },
@@ -327,6 +334,34 @@ function workerHarness(version, files, shared = new Map(), server = new Map(Obje
     },
   };
 }
+
+test('ビルド済み SW も明示更新・有効化・全資産のオフライン応答を保つ', async (t) => {
+  const { source, output } = await fixture(t);
+  const result = await build(source, output);
+  const files = Object.fromEntries(await Promise.all(result.files.filter(name => name !== 'sw.js')
+    .map(async name => [name, await readFile(join(output, name))])));
+  const worker = runWorker(await readFile(join(output, 'sw.js'), 'utf8'), files);
+
+  await worker.lifecycle('install');
+  assert.equal(worker.skipped, 0, '圧縮済みのイベントも自動で待機解除しない');
+  await worker.message({ type: 'SKIP_WAITING' });
+  assert.equal(worker.skipped, 0);
+  await worker.message({ type: 'APPLY_UPDATE' });
+  assert.equal(worker.skipped, 1);
+  await worker.lifecycle('activate');
+  assert.ok(worker.shared.has(`freecell:/free-freecell/:${result.version}`));
+
+  worker.server.clear();
+  worker.fetched.length = 0;
+  for (const [name, body] of Object.entries(files)) {
+    const response = await worker.request(`https://example.test/free-freecell/${name}`);
+    assert.ok(response.ok, name);
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), body, name);
+  }
+  const entry = await worker.request('https://example.test/free-freecell/');
+  assert.deepEqual(Buffer.from(await entry.arrayBuffer()), files['index.html']);
+  assert.equal(worker.fetched.length, 0, '配布した JS・CSS・日本語を再取得せず復元する');
+});
 
 test('SW caches a complete subpath app and serves both entry URLs offline without network', async () => {
   const worker = workerHarness('v1', { 'index.html': '日本語のゲーム', 'main-123456789abc.js': 'game' });
