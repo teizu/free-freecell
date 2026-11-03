@@ -3,7 +3,7 @@
  * DOM はゲーム状態から描画し、時計と案内だけを個別に更新する。
  */
 import { SUITS, rank, cardLabel, createGame, getBoard, move, quickMove, autoHome, undo, redo, restart, isWon } from './game.js';
-import { loadGame, saveGame } from './storage.js';
+import { loadGame, saveGame, saveReload, takeReload } from './storage.js';
 import { setupOffline } from './offline.js';
 import { positionOf, setupDrag } from './drag.js';
 
@@ -11,7 +11,9 @@ const find = (id) => document.getElementById(id);
 const boardElement = find('board');
 const dialog = find('confirm-dialog');
 const storageKey = `freecell:${new URL('./', location.href).pathname}:v1`;
-const restored = loadGame(storageKey);
+const reloadKey = `${storageKey}:reload`;
+const resumed = takeReload(reloadKey);
+const restored = resumed ? { game: resumed.game, error: null } : loadGame(storageKey);
 let game = restored.game ?? createGame();
 let selected = null;
 let runningSince = null;
@@ -22,7 +24,8 @@ let settingError = '';
 let automaticRun = 0;
 let automaticAnimation = null;
 try {
-  find('auto-enabled').checked = localStorage.getItem(`${storageKey}:auto-home`) === '1';
+  find('auto-enabled').checked = resumed?.automatic ?? localStorage.getItem(`${storageKey}:auto-home`) === '1';
+  if (resumed) localStorage.setItem(`${storageKey}:auto-home`, resumed.automatic ? '1' : '0');
 } catch {
   settingError = '自動移動の設定を保存できません。この画面では操作できます。';
 }
@@ -85,6 +88,15 @@ function persist() {
   const error = saveGame(storageKey, game) ?? settingError;
   find('storage-status').hidden = !error;
   find('storage-status').textContent = error ?? '';
+  return !error;
+}
+
+/** 更新の要求前に保存を確認し、再読込の直前にタブ専用の引き継ぎも確定する。 */
+function prepareUpdate(reloading) {
+  cancelAutomatic();
+  cancelDrag();
+  if (!persist() || (reloading && !saveReload(reloadKey, game, find('auto-enabled').checked))) return false;
+  return true;
 }
 
 /** 選択だけなら DOM を置き換えず、同じカードへの連続クリックを維持する。 */
@@ -431,4 +443,4 @@ if (restored.error) announce(restored.error);
 else if (isWon(getBoard(game))) announce('クリア済みのゲームを復元しました。「もう一局遊ぶ」で始められます。');
 else if (restored.game) announce('保存したゲームを復元しました。');
 persist();
-setupOffline((status) => { find('offline-status').textContent = status; });
+setupOffline((status) => { find('offline-status').textContent = status; }, find('apply-update'), prepareUpdate);

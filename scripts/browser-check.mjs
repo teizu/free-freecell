@@ -143,7 +143,12 @@ async function launchBrowser(profile, offline = false) {
         async waitFor(expression, label, timeout = 15000) {
           const deadline = Date.now() + timeout;
           while (Date.now() < deadline) {
-            if (await this.evaluate(`(async () => Boolean(await (${expression})))()`)) return;
+            try {
+              if (await this.evaluate(`(async () => Boolean(await (${expression})))()`)) return;
+            } catch (error) {
+              // ボタンからの再読込で文書が切り替わる瞬間だけは、新しい実行環境を待つ。
+              if (!/Execution context was destroyed|Cannot find context with specified id/.test(error.message)) throw error;
+            }
             await pause(50);
           }
           throw new Error(`Timed out waiting for ${label}: ${expression}`);
@@ -1120,6 +1125,7 @@ async function prepareUpdate(page, server, temp) {
   await build(source, join(temp, 'live'));
   await page.evaluate(`navigator.serviceWorker.getRegistration().then(registration => registration.update())`);
   await page.waitFor(`navigator.serviceWorker.getRegistration().then(registration => Boolean(registration?.waiting))`, 'waiting updated service worker');
+  await page.waitFor(`!document.querySelector('#apply-update').hidden`, 'update button');
   assert.equal(await page.evaluate(`document.querySelector('link[rel="stylesheet"]').href`), oldStylesheet);
   assert.equal(await textOf(page, '#moves'), '1');
   const waitingCaches = await page.evaluate('caches.keys()');
@@ -1129,6 +1135,105 @@ async function prepareUpdate(page, server, temp) {
   console.log(`Update HTTP: ${updateRequests.length} requests, ${updateRequests.reduce((sum, request) => sum + request.bytes, 0)} body bytes`);
   console.log('PASS update waiting: unchanged JS reused; active game and old cache retained');
   return { oldStylesheet, originalCaches };
+}
+
+/** クリックしたタブだけを新版へ進め、保存拒否・別タブ・オフラインでも進行を守る。 */
+async function checkClickUpdate(page, browser, server, temp) {
+  const other = await browser.page();
+  let uncontrolled;
+  try {
+    await other.navigate(server.url);
+    await other.click('#undo');
+    assert.equal(await textOf(other, '#moves'), '0');
+    const otherOrigin = await other.evaluate('performance.timeOrigin');
+    // スーパーリロード相当の制御外文書でも、待機版の適用通知とボタンを使える。
+    uncontrolled = await browser.page();
+    await uncontrolled.command('Network.setBypassServiceWorker', { bypass: true });
+    await uncontrolled.navigate(server.url);
+    assert.equal(await uncontrolled.evaluate('navigator.serviceWorker.controller'), null);
+    await uncontrolled.command('Network.setBypassServiceWorker', { bypass: false });
+    await uncontrolled.click('#redo');
+    await uncontrolled.click('#redo');
+    assert.equal(await textOf(uncontrolled, '#moves'), '2');
+    const uncontrolledOrigin = await uncontrolled.evaluate('performance.timeOrigin');
+    await page.command('Page.bringToFront');
+    const update = await prepareUpdate(page, server, temp);
+    const origin = await page.evaluate('performance.timeOrigin');
+
+    // 保存不能なら SW の切替すら始めず、現在の対局と更新ボタンを保つ。
+    await page.evaluate(`window.originalSetItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (key, value) {
+        if (this === localStorage) throw new DOMException('Test save failure', 'QuotaExceededError');
+        return window.originalSetItem.call(this, key, value);
+      }`);
+    await page.click('#apply-update');
+    assert.equal(await page.evaluate('performance.timeOrigin'), origin);
+    assert.match(await textOf(page, '#offline-status'), /保存できない/);
+    assert.equal(await page.evaluate(`document.querySelector('#apply-update').disabled`), false);
+    assert.equal(await page.evaluate(`navigator.serviceWorker.getRegistration().then(registration => Boolean(registration.waiting))`), true);
+    await page.evaluate('Storage.prototype.setItem = window.originalSetItem; delete window.originalSetItem');
+
+    // 新版一式の準備後は配信元を停止しても適用できる。連打で再読込を重ねない。
+    await server.close();
+    await page.evaluate(`document.querySelector('#apply-update').click(); document.querySelector('#apply-update').click()`);
+    await page.waitFor(`performance.timeOrigin !== ${origin} && document.readyState === 'complete'
+      && document.querySelector('[data-zone="tableau"]')`, 'clicked update reload');
+    await page.evaluate('document.fonts.ready.then(() => true)');
+    const newOrigin = await page.evaluate('performance.timeOrigin');
+    const newStylesheet = await page.evaluate(`document.querySelector('link[rel="stylesheet"]').href`);
+    assert.notEqual(newStylesheet, update.oldStylesheet);
+    assert.equal(await textOf(page, '#moves'), '1');
+    assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
+    assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('cells', 0))}).dataset.card`), '19');
+    assert.equal(await page.evaluate(`sessionStorage.getItem(${JSON.stringify(`${storageKey}:reload`)})`), null);
+    await pause(150);
+    assert.equal(await page.evaluate('performance.timeOrigin'), newOrigin, 'An update click must reload only once');
+    assert.equal(await other.evaluate('performance.timeOrigin'), otherOrigin, 'Updating one tab must not reload another game');
+    assert.equal(await textOf(other, '#moves'), '0');
+    assert.equal(await other.evaluate(`document.querySelector('link[rel="stylesheet"]').href`), update.oldStylesheet);
+    await other.waitFor(`!document.querySelector('#apply-update').hidden`, 'other tab update button');
+    assert.equal(await other.evaluate(`fetch(${JSON.stringify(update.oldStylesheet)}, { cache: 'reload' }).then(response => response.ok)`), true,
+      'An older open tab must still obtain its hashed assets without the server');
+    const retainedCaches = await page.evaluate('caches.keys()');
+    assert.ok(update.originalCaches.every(name => retainedCaches.includes(name)), 'Old open tabs retain their cache');
+    assert.equal(await uncontrolled.evaluate('performance.timeOrigin'), uncontrolledOrigin);
+    await uncontrolled.waitFor(`!document.querySelector('#apply-update').hidden`, 'uncontrolled tab update button');
+
+    // 既に新版 SW が動いていても、タブ固有の控えを保存できなければ再読込をしない。
+    await other.evaluate(`window.originalSetItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (key, value) {
+        if (this === sessionStorage) throw new DOMException('Test session failure', 'QuotaExceededError');
+        return window.originalSetItem.call(this, key, value);
+      }`);
+    await other.click('#apply-update');
+    assert.equal(await other.evaluate('performance.timeOrigin'), otherOrigin);
+    assert.match(await textOf(other, '#offline-status'), /保存できない/);
+    assert.equal(await other.evaluate(`document.querySelector('#apply-update').disabled`), false);
+    await other.evaluate('Storage.prototype.setItem = window.originalSetItem; delete window.originalSetItem');
+    await other.click('#apply-update');
+    await other.waitFor(`performance.timeOrigin !== ${otherOrigin} && document.readyState === 'complete'
+      && document.querySelector('[data-zone="tableau"]')`, 'other tab requested reload');
+    assert.equal(await other.evaluate(`document.querySelector('link[rel="stylesheet"]').href`), newStylesheet);
+    assert.equal(await textOf(other, '#moves'), '0', 'The second tab must keep its own game instead of restoring the first tab');
+    assert.equal(await other.evaluate(`sessionStorage.getItem(${JSON.stringify(`${storageKey}:reload`)})`), null);
+    assert.equal(await page.evaluate('performance.timeOrigin'), newOrigin);
+    await uncontrolled.click('#apply-update');
+    await uncontrolled.waitFor(`performance.timeOrigin !== ${uncontrolledOrigin} && document.readyState === 'complete'
+      && document.querySelector('[data-zone="tableau"]')`, 'uncontrolled tab requested reload');
+    assert.equal(await uncontrolled.evaluate(`document.querySelector('link[rel="stylesheet"]').href`), newStylesheet);
+    assert.equal(await uncontrolled.evaluate('Boolean(navigator.serviceWorker.controller)'), true);
+    assert.equal(await textOf(uncontrolled, '#moves'), '2');
+  } finally {
+    await other.command('Page.close');
+    await uncontrolled?.command('Page.close');
+  }
+  // 共有 localStorage へ最後に保存したタブを明示し、オフライン再起動の基準をそろえる。
+  await page.command('Page.bringToFront');
+  await page.click('#redo');
+  assert.equal(await textOf(page, '#moves'), '2');
+  await page.click('#undo');
+  assert.equal(await textOf(page, '#moves'), '1');
+  console.log('PASS click update: saved progress and settings, one reload, independent/previously uncontrolled tabs, storage failures, offline activation and old assets');
 }
 
 /** すべての検証を実行し、ブラウザー・サーバー・一時データを必ず解放する。 */
@@ -1146,6 +1251,7 @@ async function main() {
     let page = await browser.page();
     await page.navigate(server.url);
     await page.waitFor(`navigator.serviceWorker.getRegistration().then(registration => Boolean(registration?.active))`, 'active service worker');
+    assert.equal(await page.evaluate(`document.querySelector('#apply-update').hidden`), true, 'A first installation has no pending update');
     await checkCardFont(page, browser, server.url, 'online');
     const firstRequests = server.requests.slice();
     if (!externalUrl) {
@@ -1185,16 +1291,7 @@ async function main() {
     assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
     assert.equal(browser.errors.length, 0, JSON.stringify(browser.errors));
     if (!externalUrl) {
-      const update = await prepareUpdate(page, server, temp);
-      await browser.close();
-      browser = await launchBrowser(profile);
-      page = await browser.page();
-      await page.navigate(server.url);
-      assert.notEqual(await page.evaluate(`document.querySelector('link[rel="stylesheet"]').href`), update.oldStylesheet);
-      await page.waitFor(`caches.keys().then(names => ${JSON.stringify(update.originalCaches)}.every(name => !names.includes(name)))`, 'old application cache cleanup');
-      assert.equal(await textOf(page, '#moves'), '1');
-      assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
-      console.log('PASS update activation: new version after browser restart; progress preserved and old application cache removed');
+      await checkClickUpdate(page, browser, server, temp);
     }
     await browser.close();
     await server.close();

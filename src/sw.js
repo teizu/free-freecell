@@ -72,12 +72,29 @@ async function serve(url) {
 
 self.addEventListener('install', (event) => event.waitUntil(install()));
 
-// skipWaiting / clients.claim は使わず、旧版のタブが閉じてから新版へ切り替える。
-self.addEventListener('activate', (event) => {
-  event.waitUntil(caches.keys().then((names) => Promise.all(
-    names.filter((name) => name.startsWith(PREFIX) && name !== CACHE).map((name) => caches.delete(name)),
-  )));
+/** 更新ボタンの明示的な要求だけで、準備が完了した新版を有効にする。 */
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'APPLY_UPDATE') event.waitUntil(self.skipWaiting());
 });
+
+/** 旧タブが残るクリック更新では旧アセットを保ち、タブ不在での更新時に整理する。 */
+self.addEventListener('activate', (event) => {
+  event.waitUntil((async () => {
+    if ((await self.clients.matchAll({ type: 'window' })).length) return;
+    await Promise.all((await caches.keys())
+      .filter((name) => name.startsWith(PREFIX) && name !== CACHE).map((name) => caches.delete(name)));
+  })());
+});
+
+/** 更新をまだ押していない旧タブには、その版のハッシュ付きアセットを返す。 */
+async function previousAsset(request) {
+  for (const name of await caches.keys()) {
+    if (!name.startsWith(PREFIX)) continue;
+    const saved = await (await caches.open(name)).match(request);
+    if (saved) return saved;
+  }
+  return fetch(request);
+}
 
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
@@ -88,4 +105,7 @@ self.addEventListener('fetch', (event) => {
     url.search = '';
   }
   if (URLS.has(url.href)) event.respondWith(serve(url.href));
+  else if (url.pathname.startsWith(BASE.pathname) && /-[a-f0-9]{12}\.(js|css|woff2|txt)$/.test(url.pathname)) {
+    event.respondWith(previousAsset(event.request));
+  }
 });

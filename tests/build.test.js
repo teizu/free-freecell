@@ -170,6 +170,8 @@ function workerHarness(version, files, shared = new Map(), server = new Map(Obje
   const base = 'https://example.test/free-freecell/';
   const listeners = new Map();
   const fetched = [];
+  const clients = [];
+  let skipped = 0;
   const caches = {
     keys: async () => [...shared.keys()],
     delete: async (name) => shared.delete(name),
@@ -184,7 +186,10 @@ function workerHarness(version, files, shared = new Map(), server = new Map(Obje
   };
   const context = vm.createContext({
     URL, Request, Response, Uint8Array, crypto: webcrypto, caches,
-    self: { location: { href: `${base}sw.js` }, addEventListener: (name, handler) => listeners.set(name, handler) },
+    self: {
+      location: { href: `${base}sw.js` }, addEventListener: (name, handler) => listeners.set(name, handler),
+      clients: { matchAll: async () => clients }, skipWaiting: async () => { skipped += 1; },
+    },
     fetch: async (request) => {
       const url = typeof request === 'string' ? request : request.url;
       if (request.cache === 'only-if-cached') {
@@ -199,7 +204,8 @@ function workerHarness(version, files, shared = new Map(), server = new Map(Obje
   const manifest = Object.entries(files).map(([name, body]) => [name, hash(body)]);
   vm.runInContext(swTemplate.replace('__FREECELL_VERSION__', version).replace('/*__FREECELL_ASSETS__*/ []', JSON.stringify(manifest)), context);
   return {
-    shared, server, fetched,
+    shared, server, fetched, clients,
+    get skipped() { return skipped; },
     /** ブラウザーがイベント完了まで保持する Promise を取得する。 */
     lifecycle(type) {
       let result;
@@ -210,6 +216,12 @@ function workerHarness(version, files, shared = new Map(), server = new Map(Obje
     request(url, method = 'GET') {
       let result;
       listeners.get('fetch')({ request: new Request(url, { method }), respondWith: (promise) => { result = promise; } });
+      return result;
+    },
+    /** 明示された更新要求だけを送り、待機解除の副作用を確かめる。 */
+    message(data) {
+      let result;
+      listeners.get('message')({ data, waitUntil: (promise) => { result = promise; } });
       return result;
     },
   };
@@ -275,4 +287,49 @@ test('SW rejects incomplete or mixed releases while keeping the active release u
   const offline = workerHarness('offline', { 'index.html': 'new' }, old.shared, new Map());
   await assert.rejects(offline.lifecycle('install'), /offline/);
   assert.equal(offline.shared.has('freecell:/free-freecell/:offline'), false);
+});
+
+test('SW は利用者の更新要求だけで待機を解除し、自動インストールでは切り替えない', async () => {
+  const worker = workerHarness('v1', { 'index.html': 'new' });
+  await worker.lifecycle('install');
+  assert.equal(worker.skipped, 0);
+  for (const data of [null, {}, 'APPLY_UPDATE', { type: 'SKIP_WAITING' }]) await worker.message(data);
+  assert.equal(worker.skipped, 0);
+  await worker.message({ type: 'APPLY_UPDATE' });
+  assert.equal(worker.skipped, 1);
+});
+
+test('SW のクリック更新は旧タブの資産を保持し、別アプリのキャッシュを利用しない', async () => {
+  const base = 'https://example.test/free-freecell/';
+  const legacy = 'main-123456789abc.js';
+  const fontName = 'fonts/cards-123456789abc.woff2';
+  const font = Buffer.from([0x77, 0x4f, 0x46, 0x32, 0xff, 0x80]);
+  const foreign = new Map([[`${base}${legacy}`, new Response('別アプリの値')]]);
+  const shared = new Map([['another-app:v1', foreign]]);
+  const old = workerHarness('v1', { 'index.html': 'old', [legacy]: '旧版の資産', [fontName]: font }, shared);
+  await old.lifecycle('install');
+  const fresh = workerHarness('v2', { 'index.html': 'new', 'main-abcdef123456.js': 'new script' }, shared);
+  await fresh.lifecycle('install');
+  fresh.clients.push({ id: 'tab-old' });
+  await fresh.message({ type: 'APPLY_UPDATE' });
+  await fresh.lifecycle('activate');
+  assert.ok(shared.has('freecell:/free-freecell/:v1'));
+  fresh.server.clear();
+  fresh.fetched.length = 0;
+  assert.equal(await (await fresh.request(base)).text(), 'new', 'Navigation must use the complete new release');
+  assert.equal(await (await fresh.request(`${base}${legacy}`)).text(), '旧版の資産');
+  assert.deepEqual(Buffer.from(await (await fresh.request(`${base}${fontName}`)).arrayBuffer()), font);
+  assert.equal(fresh.fetched.length, 0);
+  assert.equal(fresh.request('https://example.test/free-freecell-other/main-123456789abc.js'), undefined);
+  assert.equal(fresh.request('https://elsewhere.test/free-freecell/main-123456789abc.js'), undefined);
+  assert.equal(fresh.request(`${base}legacy.js`), undefined);
+  assert.equal(fresh.request(`${base}${legacy}`, 'POST'), undefined);
+
+  // 自アプリにない資産は別アプリのキャッシュへ流れず、通常の通信へ戻す。
+  const missing = 'styles-111111111111.css';
+  foreign.set(`${base}${missing}`, new Response('foreign CSS'));
+  fresh.server.set(missing, 'network CSS');
+  assert.equal(await (await fresh.request(`${base}${missing}`)).text(), 'network CSS');
+  assert.deepEqual(fresh.fetched, [`${base}${missing}`]);
+  assert.ok(shared.has('another-app:v1'));
 });

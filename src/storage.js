@@ -23,3 +23,27 @@ export function saveGame(key, game, storageFactory = () => globalThis.localStora
     return '保存できません。この画面では遊べますが、閉じると今回の進行を失う場合があります。';
   }
 }
+
+/** 更新時だけタブ固有の控えを作り、別タブの永続保存による上書きから進行を守る。 */
+export function saveReload(key, game, automatic, storageFactory = () => globalThis.sessionStorage) {
+  try {
+    storageFactory().setItem(key, JSON.stringify({ game, automatic }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 更新用の控えは一度だけ消費し、破損や保存拒否なら通常の永続保存へ戻る。 */
+export function takeReload(key, storageFactory = () => globalThis.sessionStorage) {
+  try {
+    const storage = storageFactory();
+    const value = storage.getItem(key);
+    if (value === null) return null;
+    storage.removeItem(key);
+    const saved = JSON.parse(value);
+    return validateGame(saved?.game) && typeof saved.automatic === 'boolean' ? saved : null;
+  } catch {
+    return null;
+  }
+}
