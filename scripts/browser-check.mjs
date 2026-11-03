@@ -782,7 +782,13 @@ async function checkMaximization(page, server, browser, screenshots) {
         return { id: control.id || control.className, left: rect.left, right: rect.right,
           top: rect.top, bottom: rect.bottom, visible: getComputedStyle(control).visibility === 'visible' };
       });
-      return { menu: { left: menu.left, right: menu.right, top: menu.top, bottom: menu.bottom },
+      const sound = document.querySelector('#sound-toggle');
+      const box = sound.getBoundingClientRect();
+      return { sound: { left: box.left, right: box.right, top: box.top, bottom: box.bottom,
+        visible: getComputedStyle(sound).visibility === 'visible',
+        iconOnly: getComputedStyle(sound.firstElementChild).display === 'none',
+        hit: sound.contains(document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)) },
+        menu: { left: menu.left, right: menu.right, top: menu.top, bottom: menu.bottom },
         boardLeft: board.left, boardRight: board.right, width: innerWidth, height: innerHeight,
         controls, duplicateControls: ['new-game', 'restart', 'undo', 'redo', 'auto-home', 'auto-enabled']
           .filter(id => document.querySelectorAll('#' + id).length !== 1) };
@@ -795,6 +801,11 @@ async function checkMaximization(page, server, browser, screenshots) {
       && control.right <= layout.menu.right + 1 && control.top >= -1 && control.bottom <= layout.height + 1),
       `Sidebar controls remain reachable ${label}: ${JSON.stringify(layout)}`);
     assert.deepEqual(layout.duplicateControls, [], 'Fullscreen must reuse the existing live controls');
+    assert.ok(layout.sound.visible && layout.sound.iconOnly && layout.sound.hit
+      && layout.sound.left >= 0 && layout.sound.right <= layout.boardLeft
+      && layout.sound.bottom <= layout.height && layout.height - layout.sound.bottom <= 10
+      && layout.controls.every(control => control.bottom <= layout.sound.top),
+      `The mute icon remains accessible at the lower left ${label}: ${JSON.stringify(layout)}`);
   }
 
   /** 全画面でも確認文と両ボタンが見え、盤面より手前で実タップを受けることを確かめる。 */
@@ -898,6 +909,38 @@ async function checkMaximization(page, server, browser, screenshots) {
   // 同じ操作ボタンで履歴と確認を扱い、最大化を解除せずに次の局まで進める。
   await toggle(true);
   await sidebar('landscape controls');
+  // 最大化中も同じ音声設定を実タップで切り替え、通常表示へ戻してからも状態を保つ。
+  const originalSound = await page.evaluate(`document.querySelector('#sound-toggle').getAttribute('aria-pressed') === 'true'`);
+  await touchPoint(page, await inputPoint(page, '#sound-toggle'));
+  await page.waitFor(`document.querySelector('#sound-toggle').getAttribute('aria-pressed') === '${!originalSound}'`, 'fullscreen sound toggled');
+  assert.equal(await page.evaluate(`localStorage.getItem(${JSON.stringify(soundStorageKey)})`), originalSound ? '0' : '1');
+  assert.equal(await page.evaluate(`getComputedStyle(document.querySelector('#sound-toggle'), '::before').content`), originalSound ? '"♪×"' : '"♪"');
+  const { root: documentRoot } = await page.command('DOM.getDocument');
+  const { nodeId } = await page.command('DOM.querySelector', { nodeId: documentRoot.nodeId, selector: '#sound-toggle' });
+  const { nodes } = await page.command('Accessibility.getPartialAXTree', { nodeId });
+  const soundNode = nodes.find(node => node.role?.value === 'button');
+  assert.equal(soundNode?.name?.value, '音声', 'An icon-only button keeps its accessible name');
+  assert.equal(String(soundNode.properties.find(property => property.name === 'pressed').value.value), String(!originalSound));
+  const { data: soundImage } = await page.command('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+  await writeFile(join(screenshots, 'freecell-fullscreen-sound.png'), Buffer.from(soundImage, 'base64'));
+  await toggle(false);
+  assert.equal(await page.evaluate(`getComputedStyle(document.querySelector('#sound-toggle span')).display !== 'none'`), true);
+  assert.equal(await page.evaluate(`document.querySelector('#sound-toggle').getAttribute('aria-pressed')`), String(!originalSound));
+  await toggle(true);
+  await touchPoint(page, await inputPoint(page, '#sound-toggle'));
+  await page.waitFor(`document.querySelector('#sound-toggle').getAttribute('aria-pressed') === '${originalSound}'`, 'original sound restored');
+  // 低い画面では左欄をスクロールし、最後のチェックと音声ボタンが重ならないことを確かめる。
+  await page.command('Emulation.setDeviceMetricsOverride', { width: 844, height: 240, deviceScaleFactor: 1, mobile: true });
+  await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
+  await page.evaluate(`const toolbar = document.querySelector('.toolbar'); toolbar.scrollTop = toolbar.scrollHeight`);
+  assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').getBoundingClientRect().bottom <= document.querySelector('#sound-toggle').getBoundingClientRect().top`), true);
+  await touchPoint(page, await inputPoint(page, '#sound-toggle'));
+  await page.waitFor(`document.querySelector('#sound-toggle').getAttribute('aria-pressed') === '${!originalSound}'`, 'short viewport sound control');
+  await touchPoint(page, await inputPoint(page, '#sound-toggle'));
+  await page.waitFor(`document.querySelector('#sound-toggle').getAttribute('aria-pressed') === '${originalSound}'`, 'short viewport sound restored');
+  await page.command('Emulation.setDeviceMetricsOverride', { width: 844, height: 390, deviceScaleFactor: 1, mobile: true });
+  await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
+  await page.evaluate(`document.querySelector('.toolbar').scrollTop = 0`);
   const initialCards = await page.evaluate(`[...document.querySelectorAll('#board [data-card]')].map(card => card.dataset.card)`);
   await dragPointer(page, position('tableau', 0, 6), position('cells', 0), { touch: true, hold: 150 });
   await touchPoint(page, await inputPoint(page, '#undo'));
@@ -1024,7 +1067,7 @@ async function checkMaximization(page, server, browser, screenshots) {
   await page.navigate(server.url);
   assert.equal(await page.evaluate(`Boolean(document.querySelector('#maximize').getClientRects().length)`), false,
     'The maximize control is hidden in the normal desktop layout');
-  console.log('PASS maximum size: native fullscreen, landscape request/unlock and failure races, left sidebar/reset/new/history, button/browser/Escape exit, scroll restore, unsupported fallback pinch and zoomed exit');
+  console.log('PASS maximum size: native fullscreen, landscape request/unlock and failure races, left sidebar/reset/new/history, lower-left sound icon/tap/accessibility/short viewport, button/browser/Escape exit, scroll restore, unsupported fallback pinch and zoomed exit');
 }
 
 /** 二度押しでホームを優先し、移動できない単札だけをフリーセルへ送ることを検証する。 */
@@ -1465,8 +1508,10 @@ async function checkSound(page, server, engine, browser) {
   });
   try {
     await loadFixture(page, orderedGame(), server.url);
-    assert.equal(await textOf(page, '#sound-toggle'), '♪ 音声オン', 'Sound is on by default and the button shows the current state');
+    assert.equal(await textOf(page, '#sound-toggle'), ' 音声オン', 'Sound is on by default and the button shows the current state');
     assert.equal(await page.evaluate(`document.querySelector('#sound-toggle').getAttribute('aria-pressed')`), 'true');
+    assert.equal(await page.evaluate(`document.querySelector('#sound-toggle').getAttribute('aria-label')`), '音声');
+    assert.equal(await page.evaluate(`getComputedStyle(document.querySelector('#sound-toggle'), '::before').content`), '"♪"');
     assert.equal(await page.evaluate('soundAudit.contexts.length'), 0, 'Loading a page does not create an audio context');
     await page.click(position('tableau', 0, 6));
     assert.equal(await page.evaluate('soundAudit.contexts.length'), 0, 'Synthetic clicks do not request playback permission');
@@ -1507,11 +1552,11 @@ async function checkSound(page, server, engine, browser) {
     await pointerClick(page, position('foundations', 3));
     const fanfare = await page.evaluate('soundAudit.tones.find(tone => tone.frequencies[0]?.value === 660)');
     assert.ok(fanfare, 'Placing the last card starts a short fanfare');
-    assert.deepEqual(fanfare.frequencies.map(event => event.value), [660, 830, 990]);
-    assert.ok(Math.abs(fanfare.stops[0] - fanfare.start - .45) < 1e-6);
-    assert.equal(Math.max(...fanfare.gain.map(event => event.value)), .01);
+    assert.deepEqual(fanfare.frequencies.map(event => event.value), [660, 880, 1320]);
+    assert.ok(Math.abs(fanfare.stops[0] - fanfare.start - .34) < 1e-6);
+    assert.equal(Math.max(...fanfare.gain.map(event => event.value)), .016);
     for (const [index, note] of fanfare.frequencies.entries()) {
-      assert.ok(Math.abs(note.time - fanfare.start - index * .16) < 1e-6);
+      assert.ok(Math.abs(note.time - fanfare.start - index * .12) < 1e-6);
     }
     const completedTones = await page.evaluate('soundAudit.tones.length');
     await key(page, 'z', 2);
@@ -1536,18 +1581,20 @@ async function checkSound(page, server, engine, browser) {
     }))`);
     assert.ok(peaks[0] > .005 && peaks[0] <= .01001);
     assert.ok(peaks[1] > .01 && peaks[1] <= .01501);
-    assert.ok(peaks[2] > .005 && peaks[2] <= .01001);
+    assert.ok(peaks[2] > .015 && peaks[2] <= .01601);
 
     await pointerClick(page, '#sound-toggle');
-    assert.equal(await textOf(page, '#sound-toggle'), '× 音声オフ');
+    assert.equal(await textOf(page, '#sound-toggle'), ' 音声オフ');
     assert.equal(await page.evaluate(`document.querySelector('#sound-toggle').getAttribute('aria-pressed')`), 'false');
+    assert.equal(await page.evaluate(`getComputedStyle(document.querySelector('#sound-toggle'), '::before').content`), '"♪×"');
+    assert.equal(await page.evaluate(`getComputedStyle(document.querySelector('#sound-toggle'), '::before').color`), 'rgb(255, 0, 0)');
     assert.equal(await page.evaluate(`localStorage.getItem(${JSON.stringify(soundStorageKey)})`), '0');
     const mutedCount = await page.evaluate('soundAudit.tones.length');
     await pointerClick(page, '#undo');
     assert.equal(await page.evaluate('soundAudit.tones.length'), mutedCount, 'Muted controls do not create sound nodes');
     assert.equal(browser.network.slice(requestStart).filter(url => new URL(url).pathname !== `${prefix}sw.js`).length, 0, 'Sound synthesis does not fetch assets');
     await page.navigate(server.url);
-    assert.equal(await textOf(page, '#sound-toggle'), '× 音声オフ');
+    assert.equal(await textOf(page, '#sound-toggle'), ' 音声オフ');
     await pointerClick(page, '#redo');
     assert.equal(await page.evaluate('soundAudit.contexts.length'), 0, 'The saved mute setting prevents context creation');
     await loadFixture(page, nearWinGame(engine), server.url);
@@ -1556,14 +1603,14 @@ async function checkSound(page, server, engine, browser) {
     assert.equal(await page.evaluate('soundAudit.contexts.length'), 0, 'A muted victory does not create or play audio');
     await pointerClick(page, '#sound-toggle');
     await page.waitFor(`soundAudit.contexts[0]?.state === 'running'`, 'sound re-enabled by real click');
-    assert.equal(await textOf(page, '#sound-toggle'), '♪ 音声オン');
+    assert.equal(await textOf(page, '#sound-toggle'), ' 音声オン');
     assert.equal(await page.evaluate(`localStorage.getItem(${JSON.stringify(soundStorageKey)})`), '1');
     await page.evaluate(`window.soundOriginalSetItem = Storage.prototype.setItem; Storage.prototype.setItem = function(key, value) {
       if (key === ${JSON.stringify(soundStorageKey)}) throw new DOMException('Sound setting denied', 'QuotaExceededError');
       return soundOriginalSetItem.call(this, key, value);
     }`);
     await pointerClick(page, '#sound-toggle');
-    assert.equal(await textOf(page, '#sound-toggle'), '× 音声オフ', 'Muting remains usable when saving is denied');
+    assert.equal(await textOf(page, '#sound-toggle'), ' 音声オフ', 'Muting remains usable when saving is denied');
   } finally {
     await page.command('Page.removeScriptToEvaluateOnNewDocument', { identifier });
     await page.navigate(server.url);
@@ -1578,7 +1625,7 @@ async function checkSound(page, server, engine, browser) {
     await page.command('Page.removeScriptToEvaluateOnNewDocument', { identifier: unsupported.identifier });
     await page.navigate(server.url);
   }
-  console.log('PASS sound: native quiet click/home waveforms, 450 ms three-note fanfare only on completion, stop/redo/mute guards, current-state labels, no audio fetch, saved mute');
+  console.log('PASS sound: native quiet click/home waveforms, 340 ms brighter rising fanfare only on completion, stop/redo/mute guards, current-state labels, no audio fetch, saved mute');
 }
 
 /** 別の実タブへ切り替え、非表示中は時計が止まり、復帰後に再開することを確認する。 */
@@ -1865,7 +1912,7 @@ async function prepareUpdate(page, server, temp) {
   const source = join(temp, 'source');
   await cp(join(root, 'src'), source, { recursive: true });
   const css = await readFile(join(source, 'styles.css'), 'utf8');
-  await writeFile(join(source, 'styles.css'), `${css}\n:root { --browser-update-check: 1; }\n`);
+  await writeFile(join(source, 'styles.css'), `${css}\n:root { --test-update: 1; }\n`);
   const oldStylesheet = await page.evaluate(`document.querySelector('link[rel="stylesheet"]').href`);
   const originalCaches = await page.evaluate('caches.keys()');
   const updateStart = server.requests.length;
@@ -2043,7 +2090,7 @@ async function main() {
     assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('cells', 0))}).dataset.card`), '19');
     assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
     await page.click('#sound-toggle');
-    assert.equal(await textOf(page, '#sound-toggle'), '× 音声オフ');
+    assert.equal(await textOf(page, '#sound-toggle'), ' 音声オフ');
     assert.equal(browser.errors.length, 0, JSON.stringify(browser.errors));
     if (!externalUrl) {
       await checkClickUpdate(page, browser, server, temp);
@@ -2059,7 +2106,7 @@ async function main() {
     assert.equal(await page.evaluate(`fetch('./offline-probe', { cache: 'no-store' }).then(() => false, () => true)`), true, 'Offline probe must fail');
     assert.equal(await textOf(page, '#moves'), '1');
     assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
-    assert.equal(await textOf(page, '#sound-toggle'), '× 音声オフ', 'Muted sound survives a complete offline browser restart');
+    assert.equal(await textOf(page, '#sound-toggle'), ' 音声オフ', 'Muted sound survives a complete offline browser restart');
     await checkCardFont(page, browser, server.url, 'offline restart');
     await page.click('#undo');
     assert.equal(await textOf(page, '#moves'), '0');

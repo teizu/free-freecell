@@ -2,11 +2,8 @@
 @font-face {
   font-family: "Noto Sans Symbols 2";
   src: url('./fonts/noto-sans-symbols-2-cards.woff2') format('woff2');
-  font-style: normal;
-  font-weight: 400;
   font-display: swap;
-  /* 空白も含め、行の基線が別のフォントのメトリクスへ切り替わるのを防ぐ。 */
-  unicode-range: U+20, U+2660, U+2663, U+2665-2666, U+1F0A1-1F0AB, U+1F0AD-1F0AE, U+1F0B1-1F0BB, U+1F0BD-1F0BE, U+1F0C1-1F0CB, U+1F0CD-1F0CE, U+1F0D1-1F0DB, U+1F0DD-1F0DE;
+  /* WOFF2 自体を 52 枚・4 スート・空白だけに絞り、文字範囲と既定値の重複指定を省く。 */
   /* 全カード共通の輪郭高 766/1000 に行ボックスを合わせる。フォントの原本は変えない。 */
   ascent-override: 76.6%;
   descent-override: 0%;
@@ -43,6 +40,9 @@ button.primary:hover { background: #163f2e; }
 .site-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-block: 1rem; }
 .brand { display: flex; align-items: center; gap: .6rem; }
 .brand > span { font-size: 2rem; }
+/* 端末内の記号だけで状態を示し、ミュートを「閉じる」と取り違えないようにする。 */
+#sound-toggle::before { content: '♪'; }
+#sound-toggle[aria-pressed=false]::before { content: '♪×'; color: red; }
 h1 { font-size: 1.35rem; margin: 0; letter-spacing: -.03em; }
 .site-footer { color: #536658; font-size: .8rem; }
 .site-footer a, #version { margin-left: .75rem; color: inherit; }
@@ -162,8 +162,11 @@ dialog h2 { font-size: 1.2rem; margin-top: 0; }
 /* 最大化では同じ操作ボタンを左へ置き、残りの幅を盤面へ割り当てる。 */
 .maximized { --menu: 124px; overflow: hidden; }
 .maximized > * { visibility: hidden; }
-.maximized .toolbar { visibility: visible; position: fixed; inset: 0 auto 0 0; z-index: 201; width: var(--menu); padding: 8px; flex-flow: column nowrap; justify-content: start; overflow: auto; }
+.maximized .toolbar { visibility: visible; position: fixed; inset: 0 auto 0 0; z-index: 201; width: var(--menu); padding: 8px 8px 56px; flex-flow: column nowrap; justify-content: start; overflow: auto; }
 .maximized .actions { display: contents; }
+/* 同じ音声ボタンを左下に置く。操作欄の末尾にも余白を取り、低い画面で重ねない。 */
+.maximized #sound-toggle { visibility: visible; position: fixed; left: 8px; bottom: 8px; z-index: 202; width: 40px; height: 40px; padding: 0; font-size: 20px; }
+.maximized #sound-toggle span { display: none; }
 /* 確認ダイアログは全画面中も最前面で表示し、リセットの承認・取消を使えるようにする。 */
 .maximized dialog { visibility: visible; }
 .maximized #board-scroll { visibility: visible; position: fixed; inset: 0 0 0 var(--menu); z-index: 200; width: auto; height: 100dvh; margin: 0; border-radius: 0; }

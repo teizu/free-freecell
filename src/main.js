@@ -335,7 +335,7 @@ async function finishMove(message, automatic = game.started && find('auto-enable
     }
   }
   if (count) message = `${count} 枚を自動でホームセルへ送りました。`;
-  announce(isWon(getBoard(game)) ? 'クリア！ すべてのカードが揃いました。' : message);
+  announce(isWon(getBoard(game)) ? 'クリア！' : message);
 }
 
 /** クリックとドロップで同じ判定・自動移動・保存を使い、不正な移動は選択を維持する。 */

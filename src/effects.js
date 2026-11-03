@@ -13,7 +13,7 @@ export function setupEffects(board, button, key) {
 
   /** 記号と文言の両方で現在の音声状態を示し、読み上げにも有効・無効を伝える。 */
   function label() {
-    button.textContent = enabled ? '♪ 音声オン' : '× 音声オフ';
+    button.firstElementChild.textContent = enabled ? ' 音声オン' : ' 音声オフ';
     button.setAttribute('aria-pressed', String(enabled));
   }
 
@@ -35,7 +35,7 @@ export function setupEffects(board, button, key) {
   }
 
   /**
-   * 小音量の正弦波を鳴らす。クリアの 3 音も単一音源へ予約し、約 450ms で終える。
+   * 小音量の正弦波を鳴らす。クリアは少し大きめの 3 音を約 340ms で軽快に鳴らす。
    * 許可前の音は溜めずに省略し、次の発音やミュートでは予約済みの残音も止める。
    */
   function play(kind = 'click') {
@@ -45,14 +45,16 @@ export function setupEffects(board, button, key) {
     const gain = context.createGain();
     const now = context.currentTime;
     const home = kind === 'home';
-    const notes = kind === 'win' ? [660, 830, 990] : [home ? 900 : 600];
-    const duration = kind === 'win' ? .13 : home ? .065 : .025;
+    const completed = kind === 'win';
+    // 最後は完全 5 度上へ跳び、最初の音から 1 オクターブ上で終える。
+    const notes = completed ? [660, 880, 1320] : [home ? 900 : 600];
+    const duration = completed ? .1 : home ? .065 : .025;
     notes.forEach((frequency, index) => {
-      const start = now + index * .16;
+      const start = now + index * .12;
       oscillator.frequency.setValueAtTime(frequency, start);
       if (home) oscillator.frequency.linearRampToValueAtTime(1200, start + duration);
       gain.gain.setValueAtTime(0, start);
-      gain.gain.linearRampToValueAtTime(home ? .015 : .01, start + .004);
+      gain.gain.linearRampToValueAtTime(completed ? .016 : home ? .015 : .01, start + .004);
       gain.gain.linearRampToValueAtTime(0, start + duration);
     });
     oscillator.connect(gain).connect(context.destination);
@@ -63,7 +65,7 @@ export function setupEffects(board, button, key) {
     };
     voice = oscillator;
     oscillator.start(now);
-    oscillator.stop(now + (notes.length - 1) * .16 + duration);
+    oscillator.stop(now + (notes.length - 1) * .12 + duration);
   }
 
   /** 再描画・Undo・非表示で、古い要素のタイマーとアニメーションを残さない。 */
