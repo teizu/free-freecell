@@ -278,7 +278,7 @@ async function checkLayout(page, screenshotDirectory) {
       version: document.querySelector('#version').textContent,
       restart: document.querySelector('#restart').textContent,
       brokenText: document.body.textContent.includes('\uFFFD'),
-      toolbar: [...document.querySelectorAll('.toolbar button')].map(button => {
+      toolbar: [...document.querySelectorAll('.toolbar button, .site-header button')].map(button => {
         const rect = button.getBoundingClientRect();
         return { id: button.id, left: rect.left, right: rect.right };
       })
@@ -300,13 +300,15 @@ async function checkLayout(page, screenshotDirectory) {
   }
 }
 
-/** 横スクロールやページ移動なしで、全ての列と末尾カードまで画面内にあることを確かめる。 */
+/** 盤面を表示した位置で全列が収まり、字形枠から四辺の余白がそろうことを確かめる。 */
 async function checkBoardBounds(page, label) {
   const bounds = await page.evaluate(`(() => {
     const board = document.querySelector('#board').getBoundingClientRect();
     const scroll = document.querySelector('#board-scroll');
+    const scrollRect = scroll.getBoundingClientRect();
     const cards = [...document.querySelectorAll('[data-card]')].map(card => card.getBoundingClientRect());
     const context = document.createElement('canvas').getContext('2d');
+    const margins = [];
     const clippedLabels = [...document.querySelectorAll('.top-slots button, .column > button:last-child')].flatMap(button => {
       const card = button.getBoundingClientRect();
       const labels = button.children.length ? [...button.children] : [button];
@@ -339,6 +341,8 @@ async function checkBoardBounds(page, label) {
             bottom: baseline + metrics.actualBoundingBoxDescent * scaleY,
           };
           if (!Object.values(text).every(Number.isFinite)) return [{ card: button.dataset.card, invalidInkBounds: true }];
+          margins.push({ card: button.dataset.card, left: text.left - card.left, right: card.right - text.right,
+            top: text.top - card.top, bottom: card.bottom - text.bottom });
         }
         return text.left < card.left - 1 || text.right > card.right + 1 || text.top < card.top - 1 || text.bottom > card.bottom + 1
           ? [{ card: button.dataset.card ?? button.dataset.zone, text: label.textContent,
@@ -349,20 +353,38 @@ async function checkBoardBounds(page, label) {
     return { left: board.left, right: board.right, top: board.top, bottom: board.bottom,
       cardBottom: Math.max(...cards.map(card => card.bottom)),
       width: document.documentElement.clientWidth, height: innerHeight,
-      scrollWidth: scroll.scrollWidth, clientWidth: scroll.clientWidth, x: scrollX, y: scrollY, clippedLabels };
+      landscape: matchMedia('(orientation: landscape) and (max-height: 500px)').matches,
+      scrollTop: scrollRect.top, scrollHeight: scrollRect.height,
+      scrollWidth: scroll.scrollWidth, clientWidth: scroll.clientWidth, x: scrollX, y: scrollY, clippedLabels, margins };
   })()`);
   assert.ok(bounds.left >= 0 && bounds.right <= bounds.width + 1, `Board width ${label}: ${JSON.stringify(bounds)}`);
-  assert.ok(bounds.top >= 0 && bounds.bottom <= bounds.height + 1 && bounds.cardBottom <= bounds.height + 1,
+  assert.ok(bounds.top >= -1 && bounds.bottom <= bounds.height + 1 && bounds.cardBottom <= bounds.height + 1,
     `Board height ${label}: ${JSON.stringify(bounds)}`);
   assert.ok(bounds.scrollWidth <= bounds.clientWidth + 1, `Board horizontal scrolling ${label}: ${JSON.stringify(bounds)}`);
   assert.equal(bounds.x, 0, `Horizontal page scroll ${label}`);
-  assert.equal(bounds.y, 0, `Vertical page scroll ${label}`);
+  if (bounds.landscape) {
+    assert.ok(Math.abs(bounds.scrollTop) <= 1 && Math.abs(bounds.scrollHeight - bounds.height) <= 1,
+      `Landscape board uses the entire viewport height ${label}: ${JSON.stringify(bounds)}`);
+    assert.ok(bounds.y > 0, 'Landscape starts at the board with the menu above it');
+  } else assert.equal(bounds.y, 0, `Vertical page scroll ${label}`);
   assert.deepEqual(bounds.clippedLabels, [], `Visible labels must fit their cards ${label}`);
+  const uneven = bounds.margins.filter(({ left, right, top, bottom }) => {
+    const sides = [left, right, top, bottom];
+    // フォントの基線と輪郭の端は別々に丸められるため、物理 1px ずつのずれを許容する。
+    return Math.min(...sides) < .5 || Math.max(...sides) > 3.5 || Math.max(...sides) - Math.min(...sides) > 2.1;
+  });
+  assert.deepEqual(uneven, [], `The glyph frame must have approximately equal 2 px margins ${label}`);
 }
 
 /** viewport の反映を待ち、スクロールバーを含めた表示幅でページ全体を撮影する。 */
 async function capturePage(page, path) {
   await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
+  if (await page.evaluate(`matchMedia('(orientation: landscape) and (max-height: 500px)').matches`)) {
+    // 全ページの clip は CDP が一時的に高さを変えてしまうため、横向きは実際の一画面だけを撮る。
+    const { data } = await page.command('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+    await writeFile(path, Buffer.from(data, 'base64'));
+    return;
+  }
   const bounds = await page.evaluate(`({ width: innerWidth, height: document.documentElement.scrollHeight })`);
   const { data } = await page.command('Page.captureScreenshot', {
     format: 'png', captureBeyondViewport: true, clip: { x: 0, y: 0, ...bounds, scale: 1 },
@@ -648,6 +670,69 @@ async function checkPinchZoom(page, server, browser) {
   console.log('PASS pinch: native zoom in/out over cards, free/home cells, toolbar, checkbox and background; drag-to-pinch cancellation, residual finger, zoomed drag, no gameplay network');
 }
 
+/** 横向きでは盤面の左右余白からメニューへ戻れ、メニュー操作もスクロールを奪わない。 */
+async function checkLandscapeScroll(page, server, engine, browser, screenshots) {
+  await page.command('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 2 });
+  await page.command('Emulation.setDeviceMetricsOverride', { width: 844, height: 390, deviceScaleFactor: 1, mobile: true });
+  await loadFixture(page, orderedGame(), server.url);
+  await page.waitFor(`Math.abs(document.querySelector('#board-scroll').getBoundingClientRect().top) < 1`, 'landscape initially scrolled to board');
+  await checkBoardBounds(page, 'landscape full-height board');
+  const networkStart = browser.network.length;
+  const geometry = await page.evaluate(`(() => { const box = document.querySelector('#board-scroll').getBoundingClientRect();
+    return { left: box.left, right: innerWidth - box.right, width: innerWidth }; })()`);
+  assert.ok(geometry.left >= 20 && geometry.right >= 20, 'Both edges leave enough room for a finger');
+
+  /** 実際の 1 本指スワイプを送り、最後に止めて慣性スクロールによる検証の揺れを防ぐ。 */
+  async function swipe(x, from, to) {
+    await page.command('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y: from, id: 0 }] });
+    for (let step = 1; step <= 8; step += 1) {
+      await page.command('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: from + (to - from) * step / 8, id: 0 }] });
+      await pause(35);
+    }
+    await pause(100);
+    await page.command('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  }
+  for (const x of [geometry.left / 2, geometry.width - geometry.right / 2]) {
+    await page.evaluate(`document.querySelector('#board-scroll').scrollIntoView({ block: 'start' })`);
+    await swipe(x, 60, 340);
+    await page.waitFor('scrollY < 1', 'side swipe reveals the upper menu');
+    const menu = await page.evaluate(`document.querySelector('#new-game').getBoundingClientRect().top`);
+    assert.ok(menu >= 0 && menu < 390, 'Game controls remain reachable by scrolling');
+    await page.click('#auto-enabled');
+    await page.click('#auto-enabled');
+    assert.equal(await page.evaluate('scrollY'), 0, 'Redrawing from menu settings must not force the user back to the board');
+    await swipe(x, 340, 60);
+    await page.waitFor('scrollY > 50', 'side swipe returns toward the board');
+    assert.equal(await textOf(page, '#moves'), '0');
+    assert.equal(await page.evaluate(`document.querySelectorAll('.dragging').length`), 0);
+  }
+  await page.evaluate(`document.querySelector('#board-scroll').scrollIntoView({ block: 'start' })`);
+  await capturePage(page, join(screenshots, 'freecell-landscape-scroll.png'));
+  assert.equal(browser.network.slice(networkStart).filter(url => new URL(url).pathname !== `${prefix}sw.js`).length, 0,
+    'Side scrolling and menu settings must not fetch assets');
+  await loadFixture(page, nearWinGame(engine), server.url);
+  await pointerClick(page, '[data-card="51"]');
+  await pointerClick(page, position('foundations', 3));
+  await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
+  await checkBoardBounds(page, 'landscape after winning');
+  await loadFixture(page, orderedGame(), server.url);
+  const pinchNetworkStart = browser.network.length;
+  const height = await page.evaluate(`document.querySelector('#board').style.getPropertyValue('--card-height')`);
+  const expanded = await pinch(page, await inputPoint(page, position('tableau', 3, 6)));
+  assert.ok(expanded > 1.2, 'Native pinch also enlarges the full-height landscape board');
+  assert.equal(await page.evaluate(`document.querySelector('#board').style.getPropertyValue('--card-height')`), height);
+  assert.equal(await textOf(page, '#moves'), '0');
+  assert.equal(browser.network.slice(pinchNetworkStart).filter(url => new URL(url).pathname !== `${prefix}sw.js`).length, 0);
+  await page.command('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  await page.navigate(server.url);
+  await page.waitFor('scrollY === 0', 'portrait starts from the upper menu');
+  await checkBoardBounds(page, 'portrait after landscape');
+  await page.command('Emulation.setTouchEmulationEnabled', { enabled: false });
+  await page.command('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  await page.navigate(server.url);
+  console.log('PASS landscape: full-height board, equal card margins, two scroll gutters, reachable menu, no forced scrolling, pinch and portrait restoration');
+}
+
 /** 二度押しでホームを優先し、移動できない単札だけをフリーセルへ送ることを検証する。 */
 async function checkQuickMove(page, server) {
   await loadFixture(page, orderedGame(), server.url);
@@ -698,6 +783,42 @@ function gameWithTails(tails) {
 async function waitAutomatic(page, moves = null) {
   const expected = moves === null ? 'true' : `document.querySelector('#moves').textContent === '${moves}'`;
   await page.waitFor(`!document.querySelector('.auto-moving') && (${expected})`, 'automatic move completion');
+}
+
+/** 未開始の局では自動設定を保存するだけに留め、最初の成功操作か明示ボタンから進める。 */
+async function checkAutomaticStart(page, server) {
+  await loadFixture(page, orderedGame(), server.url);
+  await page.click('#auto-enabled');
+  assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
+  await pause(1100);
+  assert.equal(await textOf(page, '#moves'), '0', 'Enabling automatic mode must not start an untouched deal');
+  assert.equal(await textOf(page, '#time'), '0:00', 'The clock stays stopped before the first successful move');
+  await page.click(position('tableau', 0, 6));
+  await page.click(position('foundations', 1));
+  assert.equal(await textOf(page, '#moves'), '0', 'Selection and an illegal move must not start automatic play');
+  await page.navigate(server.url);
+  assert.equal(await textOf(page, '#moves'), '0', 'Restoring an untouched deal must not start automatic play');
+  assert.equal(await textOf(page, '#time'), '0:00');
+  assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
+  await page.click(position('tableau', 0, 6));
+  await page.click(position('cells', 0));
+  await waitAutomatic(page, 53);
+  assert.equal(await textOf(page, '#progress'), '52', 'Automatic play begins after a successful user move');
+  await page.click('#restart');
+  await page.click('#confirm-accept');
+  assert.equal(await textOf(page, '#moves'), '0', 'Restarting preserves automatic mode without starting it');
+  assert.equal(await textOf(page, '#time'), '0:00');
+  assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
+  await page.click('#auto-home');
+  await waitAutomatic(page, 52);
+  await page.click('#win-new');
+  assert.equal(await textOf(page, '#moves'), '0', 'A new game after winning waits for a player move');
+  assert.equal(await textOf(page, '#time'), '0:00');
+  await page.click('#new-game');
+  assert.equal(await textOf(page, '#moves'), '0', 'A fresh deal keeps automatic mode armed without moving');
+  assert.equal(await page.evaluate(`JSON.parse(localStorage.getItem(${JSON.stringify(storageKey)})).started`), false);
+  await page.click('#auto-enabled');
+  console.log('PASS automatic start: untouched checkbox/new/restart/restore keep zero moves and stopped time; user move or explicit automatic button starts play');
 }
 
 /** 安全な自動移動、チェック設定の保存、履歴操作時の自動移動抑止を確かめる。 */
@@ -811,11 +932,11 @@ async function checkAutomaticAnimation(page, server, browser) {
   await page.click('#redo');
   assert.equal(await textOf(page, '#moves'), String(interrupted + 1), 'Redo restores only one committed automatic card');
 
-  // オン直後の最初の一枚を残し、オフ操作から古いループが再開しない。
+  // 未開始の局では設定だけを変え、オン・オフ操作から最初の一枚を自動で送らない。
   await loadFixture(page, orderedGame(), server.url);
   await page.evaluate(`document.querySelector('#auto-enabled').click(); document.querySelector('#auto-enabled').click()`);
   await pause(350);
-  assert.equal(await textOf(page, '#moves'), '1');
+  assert.equal(await textOf(page, '#moves'), '0', 'Toggling automatic mode must not play the first move');
   assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), false);
 
   // 確認ダイアログを開くだけで進行を止め、キャンセル・承認のどちらにも古い送りを持ち込まない。
@@ -1013,7 +1134,7 @@ async function checkHistoryShortcuts(page, server) {
 }
 
 /** ネイティブ Web Audio の生成と波形を計測し、控えめな音・許可・消音・保存を確認する。 */
-async function checkSound(page, server, browser) {
+async function checkSound(page, server, engine, browser) {
   const { identifier } = await page.command('Page.addScriptToEvaluateOnNewDocument', {
     source: `(() => {
       const audit = window.soundAudit = { contexts: [], tones: [] };
@@ -1050,12 +1171,13 @@ async function checkSound(page, server, browser) {
   });
   try {
     await loadFixture(page, orderedGame(), server.url);
-    assert.equal(await textOf(page, '#sound-toggle'), '音声オフ', 'Sound is on by default and the button names the action');
+    assert.equal(await textOf(page, '#sound-toggle'), '♪ 音声オン', 'Sound is on by default and the button shows the current state');
+    assert.equal(await page.evaluate(`document.querySelector('#sound-toggle').getAttribute('aria-pressed')`), 'true');
     assert.equal(await page.evaluate('soundAudit.contexts.length'), 0, 'Loading a page does not create an audio context');
     await page.click(position('tableau', 0, 6));
     assert.equal(await page.evaluate('soundAudit.contexts.length'), 0, 'Synthetic clicks do not request playback permission');
     await page.evaluate(`document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
-    const requestStart = browser.network.length;
+    let requestStart = browser.network.length;
     await pointerClick(page, 'h1');
     await page.waitFor(`soundAudit.contexts[0]?.state === 'running'`, 'audio context unlocked by user input');
     await pointerClick(page, position('tableau', 0, 6));
@@ -1076,8 +1198,36 @@ async function checkSound(page, server, browser) {
       assert.ok(Math.abs(tone.stops[0] - tone.start - duration) < 1e-6);
     }
     assert.equal(home.frequencies.at(-1).value, 1200);
+    await pointerClick(page, '#undo');
+    const undoClick = await page.evaluate('soundAudit.tones.at(-1)');
+    assert.equal(undoClick.frequencies[0].value, 600);
+    assert.equal(undoClick.stops.length, 1, 'Undo must keep its own short click sound instead of immediately cancelling it');
+    assert.equal(browser.network.slice(requestStart).filter(url => new URL(url).pathname !== `${prefix}sw.js`).length, 0,
+      'Click and home synthesis do not fetch assets');
+
+    await loadFixture(page, nearWinGame(engine), server.url);
+    requestStart = browser.network.length;
+    await pointerClick(page, 'h1');
+    await page.waitFor(`soundAudit.contexts[0]?.state === 'running'`, 'audio context ready for the final card');
+    await pointerClick(page, '[data-card="51"]');
+    await pointerClick(page, position('foundations', 3));
+    const fanfare = await page.evaluate('soundAudit.tones.find(tone => tone.frequencies[0]?.value === 660)');
+    assert.ok(fanfare, 'Placing the last card starts a short fanfare');
+    assert.deepEqual(fanfare.frequencies.map(event => event.value), [660, 830, 990]);
+    assert.ok(Math.abs(fanfare.stops[0] - fanfare.start - .45) < 1e-6);
+    assert.equal(Math.max(...fanfare.gain.map(event => event.value)), .01);
+    for (const [index, note] of fanfare.frequencies.entries()) {
+      assert.ok(Math.abs(note.time - fanfare.start - index * .16) < 1e-6);
+    }
+    const completedTones = await page.evaluate('soundAudit.tones.length');
+    await key(page, 'z', 2);
+    const stoppedFanfare = await page.evaluate('soundAudit.tones.find(tone => tone.frequencies[0]?.value === 660)');
+    assert.ok(stoppedFanfare.stops.length >= 2 && stoppedFanfare.stops.at(-1) < stoppedFanfare.stops[0],
+      'Undo immediately stops the remaining fanfare notes');
+    await page.click('#redo');
+    assert.equal(await page.evaluate('soundAudit.tones.length'), completedTones, 'Redoing a win does not replay the fanfare');
     // 観測した実際の包絡線をオフライン音声エンジンにも通し、デジタル波形の振幅上限を確認する。
-    const peaks = await page.evaluate(`Promise.all(${JSON.stringify([click, home])}.map(async tone => {
+    const peaks = await page.evaluate(`Promise.all(${JSON.stringify([click, home, fanfare])}.map(async tone => {
       const duration = tone.stops[0] - tone.start;
       const context = new OfflineAudioContext(1, Math.ceil(duration * 48000), 48000);
       const oscillator = context.createOscillator();
@@ -1092,28 +1242,34 @@ async function checkSound(page, server, browser) {
     }))`);
     assert.ok(peaks[0] > .005 && peaks[0] <= .01001);
     assert.ok(peaks[1] > .01 && peaks[1] <= .01501);
+    assert.ok(peaks[2] > .005 && peaks[2] <= .01001);
 
     await pointerClick(page, '#sound-toggle');
-    assert.equal(await textOf(page, '#sound-toggle'), '音声オン');
+    assert.equal(await textOf(page, '#sound-toggle'), '× 音声オフ');
+    assert.equal(await page.evaluate(`document.querySelector('#sound-toggle').getAttribute('aria-pressed')`), 'false');
     assert.equal(await page.evaluate(`localStorage.getItem(${JSON.stringify(soundStorageKey)})`), '0');
     const mutedCount = await page.evaluate('soundAudit.tones.length');
     await pointerClick(page, '#undo');
     assert.equal(await page.evaluate('soundAudit.tones.length'), mutedCount, 'Muted controls do not create sound nodes');
     assert.equal(browser.network.slice(requestStart).filter(url => new URL(url).pathname !== `${prefix}sw.js`).length, 0, 'Sound synthesis does not fetch assets');
     await page.navigate(server.url);
-    assert.equal(await textOf(page, '#sound-toggle'), '音声オン');
+    assert.equal(await textOf(page, '#sound-toggle'), '× 音声オフ');
     await pointerClick(page, '#redo');
     assert.equal(await page.evaluate('soundAudit.contexts.length'), 0, 'The saved mute setting prevents context creation');
+    await loadFixture(page, nearWinGame(engine), server.url);
+    await pointerClick(page, '[data-card="51"]');
+    await pointerClick(page, position('foundations', 3));
+    assert.equal(await page.evaluate('soundAudit.contexts.length'), 0, 'A muted victory does not create or play audio');
     await pointerClick(page, '#sound-toggle');
     await page.waitFor(`soundAudit.contexts[0]?.state === 'running'`, 'sound re-enabled by real click');
-    assert.equal(await textOf(page, '#sound-toggle'), '音声オフ');
+    assert.equal(await textOf(page, '#sound-toggle'), '♪ 音声オン');
     assert.equal(await page.evaluate(`localStorage.getItem(${JSON.stringify(soundStorageKey)})`), '1');
     await page.evaluate(`window.soundOriginalSetItem = Storage.prototype.setItem; Storage.prototype.setItem = function(key, value) {
       if (key === ${JSON.stringify(soundStorageKey)}) throw new DOMException('Sound setting denied', 'QuotaExceededError');
       return soundOriginalSetItem.call(this, key, value);
     }`);
     await pointerClick(page, '#sound-toggle');
-    assert.equal(await textOf(page, '#sound-toggle'), '音声オン', 'Muting remains usable when saving is denied');
+    assert.equal(await textOf(page, '#sound-toggle'), '× 音声オフ', 'Muting remains usable when saving is denied');
   } finally {
     await page.command('Page.removeScriptToEvaluateOnNewDocument', { identifier });
     await page.navigate(server.url);
@@ -1128,7 +1284,7 @@ async function checkSound(page, server, browser) {
     await page.command('Page.removeScriptToEvaluateOnNewDocument', { identifier: unsupported.identifier });
     await page.navigate(server.url);
   }
-  console.log('PASS sound: real AudioContext permission, 25/65 ms quiet waveforms, distinct home tone, no audio fetch, mute persistence, denied storage/unsupported audio');
+  console.log('PASS sound: native quiet click/home waveforms, 450 ms three-note fanfare only on completion, stop/redo/mute guards, current-state labels, no audio fetch, saved mute');
 }
 
 /** 別の実タブへ切り替え、非表示中は時計が止まり、復帰後に再開することを確認する。 */
@@ -1567,13 +1723,15 @@ async function main() {
     await checkLayout(page, temp);
     await checkControls(page, server, browser);
     await checkHistoryShortcuts(page, server);
-    await checkSound(page, server, browser);
+    await checkSound(page, server, engine, browser);
     await checkQuickMove(page, server);
+    await checkAutomaticStart(page, server);
     await checkAutomaticHome(page, server, engine, browser);
     await checkAutomaticAnimation(page, server, browser);
     await checkGroupMove(page, server, engine);
     await checkDragAndDrop(page, server, engine, browser);
     await checkPinchZoom(page, server, browser);
+    await checkLandscapeScroll(page, server, engine, browser, temp);
     await checkWin(page, server, engine);
     await checkVictoryEffects(page, server, engine, browser);
     await checkStorage(page, server);
@@ -1590,7 +1748,7 @@ async function main() {
     assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('cells', 0))}).dataset.card`), '19');
     assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
     await page.click('#sound-toggle');
-    assert.equal(await textOf(page, '#sound-toggle'), '音声オン');
+    assert.equal(await textOf(page, '#sound-toggle'), '× 音声オフ');
     assert.equal(browser.errors.length, 0, JSON.stringify(browser.errors));
     if (!externalUrl) {
       await checkClickUpdate(page, browser, server, temp);
@@ -1606,7 +1764,7 @@ async function main() {
     assert.equal(await page.evaluate(`fetch('./offline-probe', { cache: 'no-store' }).then(() => false, () => true)`), true, 'Offline probe must fail');
     assert.equal(await textOf(page, '#moves'), '1');
     assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
-    assert.equal(await textOf(page, '#sound-toggle'), '音声オン', 'Muted sound survives a complete offline browser restart');
+    assert.equal(await textOf(page, '#sound-toggle'), '× 音声オフ', 'Muted sound survives a complete offline browser restart');
     await checkCardFont(page, browser, server.url, 'offline restart');
     await page.click('#undo');
     assert.equal(await textOf(page, '#moves'), '0');

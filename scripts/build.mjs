@@ -5,6 +5,7 @@ import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { transformSync } from 'esbuild';
+import { minify } from 'html-minifier-terser';
 import { checkSize } from './size.mjs';
 
 const digest = (content) => createHash('sha256').update(content).digest('hex');
@@ -21,6 +22,17 @@ function compact(content, extension) {
     charset: 'utf8',
     legalComments: 'none',
   }).code;
+}
+
+/** HTML は解析して縮め、語間の空白と空白自体に意味がある要素の内容を保つ。 */
+function compactHTML(content) {
+  return minify(content, {
+    collapseWhitespace: true,
+    conservativeCollapse: true,
+    removeComments: true,
+    // 固定版の空白判定を拡張し、script/style の先頭・末尾の改行も残す。
+    canTrimWhitespace: (tag) => !['pre', 'textarea', 'script', 'style'].includes(tag),
+  });
 }
 
 /** アプリの最終変更日を日本時間で固定し、再ビルドや閲覧だけでは日付を進めない。 */
@@ -105,6 +117,10 @@ export async function build(source, destination) {
 
   await collect();
   if (!inputs.has('index.html') || !inputs.has('sw.js')) throw new Error('index.html と sw.js が必要です。');
+  // 非同期の HTML 変換を先に済ませ、依存ファイル名の解決は単純な同期処理に保つ。
+  for (const [file, content] of inputs) {
+    if (extname(file) === '.html') inputs.set(file, Buffer.from(await compactHTML(content.toString('utf8'))));
+  }
   const date = await updateDate(source, inputs.keys());
   for (const file of inputs.keys()) if (file !== 'sw.js') compile(file);
   const assets = [...outputs].sort(([left], [right]) => left.localeCompare(right)).map(([name, content]) => [name, digest(content)]);

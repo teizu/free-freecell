@@ -71,7 +71,8 @@ dd small { font-size: .8rem; font-weight: normal; color: #536658; }
 .top-slots { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .tableau { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 8px; }
 .column { position: relative; min-width: 0; }
-.card, .empty-slot { width: 100%; height: var(--card-height); padding: 0; border-radius: 6px; }
+/* 枠の実寸比で札の幅も縮め、上下左右の余白を 2px にそろえる。 */
+.card, .empty-slot { width: calc((var(--card-height) - 4px) * 574 / 766 + 4px); height: var(--card-height); margin-inline: auto; padding: 0; border-radius: 6px; }
 .empty-slot {
   border: 1px solid #71917a;
   background: transparent;
@@ -96,9 +97,9 @@ dd small { font-size: .8rem; font-weight: normal; color: #536658; }
 /* 自動で飛ぶ札は盤面より手前へ置き、操作対象は確定済みの盤面にする。 */
 .card.auto-moving { z-index: 100; pointer-events: none; }
 .card.red { color: #ae343b; }
-.column > .card, .column > .empty-slot { position: absolute; left: 0; }
+.column > .card, .column > .empty-slot { position: absolute; left: 0; right: 0; }
 /* カードの数字・絵札も一文字の図柄に含む。操作文言は端末のフォントを使う。 */
-.card-face, .card-caption, .empty-slot[data-zone="foundations"] {
+.card-face, .empty-slot[data-zone="foundations"] {
   font-family: "Noto Sans Symbols 2", system-ui, sans-serif;
   font-synthesis: none;
 }
@@ -114,8 +115,6 @@ dd small { font-size: .8rem; font-weight: normal; color: #536658; }
   white-space: nowrap;
   pointer-events: none;
 }
-.card-caption { display: none; }
-.compact-cards .card-caption { display: block; position: absolute; left: 2px; top: 2px; font-size: var(--card-label-size); line-height: 1; pointer-events: none; }
 .card[aria-pressed="true"] { background: #fff0bb; border-color: #a57808; box-shadow: inset 0 0 0 2px #cc9d29; }
 /* 重なったカードでも上端の枠が見えるよう、フォーカスは内側へ描く。 */
 .board button:focus-visible { outline: 3px solid #bd8606; outline-offset: -3px; }
@@ -159,4 +158,9 @@ dialog h2 { font-size: 1.2rem; margin-top: 0; }
   .win-panel { padding: .4rem .6rem; gap: .3rem; margin-bottom: .4rem; }
   .win-panel h2 { font-size: 1rem; }
   .win-panel p { font-size: .65rem; }
+}
+/* 横向きの低い画面は盤面だけで表示高を使う。左右の空白からメニューへスクロールできる。 */
+@media (orientation: landscape) and (max-height: 500px) {
+  .board-scroll { width: calc(100% - 32px); height: 100vh; height: 100dvh; margin-inline: auto; }
+  .board { height: 100%; align-content: start; }
 }

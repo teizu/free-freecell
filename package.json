@@ -13,6 +13,7 @@
     "test:browser": "node scripts/browser-check.mjs"
   },
   "devDependencies": {
-    "esbuild": "0.28.2"
+    "esbuild": "0.28.2",
+    "html-minifier-terser": "7.2.0"
   }
 }

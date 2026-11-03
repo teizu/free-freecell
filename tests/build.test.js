@@ -210,6 +210,50 @@ test('build rejects invalid syntax before replacing the last complete output', a
   assert.deepEqual((await readdir(output)).sort(), [...new Set(first.files.map(name => name.split('/')[0]))].sort());
 });
 
+test('HTML 圧縮は日本語・語間・属性と pre/textarea/script/style の内容を保つ', async (t) => {
+  const { source, output } = await fixture(t);
+  const preserved = [
+    '<p title="日本語  の説明">前 <span>日本語</span> <em>English words</em> 次&nbsp;の字</p>',
+    '<pre>\n  日本語  <span> 字間 </span>\n    次の行\n</pre>',
+    '<textarea>\n  日本語  &lt;入力&gt;\n    次の行\n</textarea>',
+    '<script>\n  const template = `日本語\n    そのまま`; // 改行も保つ\n</script>',
+    '<style>\n  .message::before { content: "日本語  の字間"; }\n</style>',
+  ];
+  const original = [
+    '<!doctype html>',
+    '<html lang="ja">',
+    '  <!-- 開発用の説明コメント -->',
+    '  <head><meta charset="utf-8"><link href="./styles.css"></head>',
+    '  <body>',
+    ...preserved.map((element) => `    ${element}`),
+    '    <button id="action" disabled aria-label="日本語 の操作"> 操作 </button>',
+    '    <script type="module" src="./main.js"></script>',
+    '  </body>',
+    '</html>',
+  ].join('\n');
+  await writeFile(join(source, 'index.html'), original);
+  const result = await build(source, output);
+  const generated = await readFile(join(output, 'index.html'), 'utf8');
+  for (const element of preserved) assert.ok(generated.includes(element), element);
+  assert.match(generated, /<button id="action" disabled(?:="disabled")? aria-label="日本語 の操作"> 操作 <\/button>/);
+  assert.match(generated, /src="\.\/main-[a-f0-9]{12}\.js"/);
+  assert.doesNotMatch(generated, /開発用の説明コメント/);
+  assert.ok(Buffer.byteLength(generated) < Buffer.byteLength(original));
+  assert.equal(await readFile(join(source, 'index.html'), 'utf8'), original, '開発用 HTML は書き換えない');
+  assert.ok((await readFile(join(output, 'sw.js'), 'utf8')).includes(hash(generated)), '圧縮後の HTML をキャッシュの版へ反映する');
+  assert.deepEqual(await build(source, output), result, '同じ HTML の再ビルド結果は変えない');
+});
+
+test('HTML の解析に失敗した場合も、直前の配布物を保持する', async (t) => {
+  const { source, output } = await fixture(t);
+  const result = await build(source, output);
+  const previous = await readFile(join(output, 'sw.js'), 'utf8');
+  await writeFile(join(source, 'index.html'), '<html><body><div title="閉じない属性');
+  await assert.rejects(build(source, output), /Parse Error/);
+  assert.equal(await readFile(join(output, 'sw.js'), 'utf8'), previous);
+  assert.equal(await measureSize(output), result.size);
+});
+
 test('build rejects circular dependencies, missing references and oversized output', async (t) => {
   const { source, output } = await fixture(t);
   await writeFile(join(source, 'lib/value.js'), 'import "../main.js";');

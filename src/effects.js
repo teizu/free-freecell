@@ -11,9 +11,10 @@ export function setupEffects(board, button, key) {
   const motion = matchMedia('(prefers-reduced-motion: reduce)');
   try { enabled = localStorage.getItem(key) !== '0'; } catch { /* 保存不可でも音の切り替えは使える。 */ }
 
-  /** ボタンには現在の状態ではなく、押すと行う操作を表示する。 */
+  /** 記号と文言の両方で現在の音声状態を示し、読み上げにも有効・無効を伝える。 */
   function label() {
-    button.textContent = enabled ? '音声オフ' : '音声オン';
+    button.textContent = enabled ? '♪ 音声オン' : '× 音声オフ';
+    button.setAttribute('aria-pressed', String(enabled));
   }
 
   /** 重ね鳴らしを避け、ミュートと画面非表示でも発音を確実に止める。 */
@@ -25,25 +26,35 @@ export function setupEffects(board, button, key) {
   /** 実際の入力時だけ音声を準備する。読み込みや自動移動から再生許可を要求しない。 */
   function unlock(event) {
     if (!enabled || !event.isTrusted) return;
+    // 次の入力で前の音を止める。click より先なので、その操作のクリック音は消さない。
+    silence();
     try {
       context ??= new AudioContext();
       if (context.state === 'suspended') context.resume().catch(() => {});
     } catch { /* 音声非対応でもゲームは続ける。 */ }
   }
 
-  /** 短い正弦波を小音量で鳴らす。再生待ちを溜めず、許可前の音は省略する。 */
-  function play(home = false) {
+  /**
+   * 小音量の正弦波を鳴らす。クリアの 3 音も単一音源へ予約し、約 450ms で終える。
+   * 許可前の音は溜めずに省略し、次の発音やミュートでは予約済みの残音も止める。
+   */
+  function play(kind = 'click') {
     if (!enabled || document.hidden || context?.state !== 'running') return;
     silence();
     const oscillator = context.createOscillator();
     const gain = context.createGain();
     const now = context.currentTime;
-    const duration = home ? .065 : .025;
-    oscillator.frequency.setValueAtTime(home ? 900 : 600, now);
-    if (home) oscillator.frequency.linearRampToValueAtTime(1200, now + duration);
-    gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(home ? .015 : .01, now + .004);
-    gain.gain.linearRampToValueAtTime(0, now + duration);
+    const home = kind === 'home';
+    const notes = kind === 'win' ? [660, 830, 990] : [home ? 900 : 600];
+    const duration = kind === 'win' ? .13 : home ? .065 : .025;
+    notes.forEach((frequency, index) => {
+      const start = now + index * .16;
+      oscillator.frequency.setValueAtTime(frequency, start);
+      if (home) oscillator.frequency.linearRampToValueAtTime(1200, start + duration);
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(home ? .015 : .01, start + .004);
+      gain.gain.linearRampToValueAtTime(0, start + duration);
+    });
     oscillator.connect(gain).connect(context.destination);
     oscillator.onended = () => {
       oscillator.disconnect();
@@ -52,7 +63,7 @@ export function setupEffects(board, button, key) {
     };
     voice = oscillator;
     oscillator.start(now);
-    oscillator.stop(now + duration);
+    oscillator.stop(now + (notes.length - 1) * .16 + duration);
   }
 
   /** 再描画・Undo・非表示で、古い要素のタイマーとアニメーションを残さない。 */
@@ -107,5 +118,6 @@ export function setupEffects(board, button, key) {
   motion.addEventListener('change', () => win(won));
   window.addEventListener('pagehide', () => { silence(); stopWin(); });
   window.addEventListener('pageshow', () => win(won));
-  return { home: () => play(true), win };
+  // クリア音はホーム移動を確定した呼び出し元だけが指定し、復元・再描画では鳴らさない。
+  return { home: (completed = false) => play(completed ? 'win' : 'home'), win };
 }

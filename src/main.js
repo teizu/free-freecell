@@ -24,6 +24,7 @@ let pointerType = '';
 let settingError = '';
 let automaticRun = 0;
 let automaticAnimation = null;
+let landscape = false;
 try {
   find('auto-enabled').checked = resumed?.automatic ?? localStorage.getItem(`${storageKey}:auto-home`) === '1';
   if (resumed) localStorage.setItem(`${storageKey}:auto-home`, resumed.automatic ? '1' : '0');
@@ -41,23 +42,30 @@ function announce(message) {
 function fitBoard() {
   // ピンチによる拡大は利用者に任せ、拡大中に縮小し直さない。
   if (window.visualViewport && visualViewport.scale !== 1) return;
-  const card = boardElement.querySelector('button');
-  if (!card) return;
+  const column = boardElement.querySelector('.column');
+  if (!column) return;
+  const wide = matchMedia('(orientation: landscape) and (max-height: 500px)').matches;
+  if (wide !== landscape) {
+    landscape = wide;
+    // 横向きに入ったときだけ盤面へ進む。メニューを読むためのスクロールは奪わない。
+    requestAnimationFrame(() => wide ? boardElement.parentElement.scrollIntoView({ block: 'start' }) : scrollTo(0, 0));
+  }
+  // 文字の送り幅ではなく全 52 枚共通の枠（574×766）と四辺 2px で大きさを決める。
+  // ボタン自身の幅を読むと、再計算するたびに縮むため、列の幅を上限にする。
+  const maximum = (column.getBoundingClientRect().width - 4) * 766 / 574 + 4;
   if (!matchMedia('(max-width: 800px), (max-height: 500px)').matches) {
-    boardElement.style.setProperty('--card-height', `${Math.min(142, card.clientWidth * 1.33)}px`);
+    boardElement.style.setProperty('--card-height', `${Math.min(142, maximum)}px`);
     boardElement.style.removeProperty('--card-step');
-    boardElement.classList.remove('compact-cards');
     return;
   }
-  const available = Math.max(80, (window.visualViewport?.height ?? innerHeight) - boardElement.getBoundingClientRect().top - scrollY - 8);
+  const viewHeight = window.visualViewport?.height ?? innerHeight;
+  const available = wide ? viewHeight : Math.max(80, viewHeight - boardElement.getBoundingClientRect().top - scrollY - 8);
   const steps = Math.max(1, ...getBoard(game).tableau.map((pile) => pile.length - 1));
   // 固定高 43px を除き、上端のランクと小スートが見える段差（高さの32%+2px）も確保する。
-  const height = Math.max(20, Math.min(card.clientWidth * 1.33, (available - 43 - steps * 2) / (2 + steps * .32)));
+  const height = Math.max(20, Math.min(maximum, (available - 43 - steps * 2) / (2 + steps * .32)));
   const step = Math.max(1, Math.min(Math.max(26, height * .32 + 2), (available - 43 - height * 2) / steps));
   boardElement.style.setProperty('--card-height', `${height}px`);
   boardElement.style.setProperty('--card-step', `${step}px`);
-  boardElement.style.setProperty('--card-label-size', `${Math.min(11, Math.max(6, step - 3))}px`);
-  boardElement.classList.toggle('compact-cards', height < card.clientWidth * .6);
 }
 
 /** 停止や保存の直前に、表示中に経過した単調増加の時間を状態へ反映する。 */
@@ -138,12 +146,7 @@ function cardButton(card, zone, index, offset) {
   // Unicode の Knight (末尾 C) を飛ばして Q・K を対応させ、補助面文字は code point で作る。
   face.textContent = String.fromCodePoint(0x1f0a0 + Math.floor(card / 13) * 16 + rank(card) + (rank(card) >= 12 ? 1 : 0));
   face.setAttribute('aria-hidden', 'true');
-  // 横向きの長い列など、絵柄が極小になる場合だけ余白に識別用の文字を添える。
-  const caption = document.createElement('span');
-  caption.className = 'card-caption';
-  caption.textContent = `${({ 1: 'A', 11: 'J', 12: 'Q', 13: 'K' })[rank(card)] ?? rank(card)} ${suit.symbol}\uFE0E`;
-  caption.setAttribute('aria-hidden', 'true');
-  button.append(face, caption);
+  button.append(face);
   return button;
 }
 
@@ -236,8 +239,8 @@ function cancelAutomatic() {
   boardElement.parentElement.classList.remove('auto-active');
 }
 
-/** 1 枚ずつ確定・保存してから短く動かし、入力で中断された古い処理は再開しない。 */
-async function finishMove(message, automatic = find('auto-enabled').checked) {
+/** 最初の成功した移動を待ち、以後は 1 枚ずつ確定・保存・演出する。明示的な自動ボタンは別扱い。 */
+async function finishMove(message, automatic = game.started && find('auto-enabled').checked) {
   cancelAutomatic();
   const run = automaticRun;
   let count = 0;
@@ -258,7 +261,7 @@ async function finishMove(message, automatic = find('auto-enabled').checked) {
     count += result.count;
     render();
     persist();
-    effects.home();
+    effects.home(isWon(getBoard(game)));
     if (animate) {
       const card = boardElement.querySelector(selector);
       const to = card.getBoundingClientRect();
@@ -287,7 +290,7 @@ function tryMove(from, to) {
   if (result.error) announce(result.error);
   else {
     game = result.game;
-    if (to.zone === 'foundations') effects.home();
+    if (to.zone === 'foundations') effects.home(isWon(getBoard(game)));
     finishMove('移動しました。次のカードを選んでください。');
   }
 }
@@ -313,7 +316,7 @@ function choosePosition(event) {
     else {
       const sentHome = getBoard(result.game).foundations.some((pile, index) => pile.length > getBoard(game).foundations[index].length);
       game = result.game;
-      if (sentHome) effects.home();
+      if (sentHome) effects.home(isWon(getBoard(game)));
       finishMove('移動しました。');
     }
     return;
