@@ -1547,16 +1547,22 @@ async function checkSound(page, server, engine, browser) {
     await pointerClick(page, 'h1');
     await page.waitFor(`soundAudit.contexts[0]?.state === 'running'`, 'audio context unlocked by user input');
     await pointerClick(page, position('tableau', 0, 6));
+    const beforeCell = await page.evaluate('soundAudit.tones.length');
     await pointerClick(page, position('cells', 0));
     assert.equal(await textOf(page, '#moves'), '1');
+    assert.equal(await page.evaluate('soundAudit.tones.length'), beforeCell + 1, 'A free-cell drop produces only its movement sound');
+    assert.equal(await page.evaluate('soundAudit.tones.at(-1).frequencies[0].value'), 720);
     await pointerClick(page, position('cells', 0));
+    const beforeHome = await page.evaluate('soundAudit.tones.length');
     await pointerClick(page, position('foundations', 0));
     assert.equal(await textOf(page, '#moves'), '2');
+    assert.equal(await page.evaluate('soundAudit.tones.length'), beforeHome + 1, 'A home placement must not add a click before or after its sound');
     const tones = await page.evaluate('soundAudit.tones');
     const click = tones.find(tone => tone.frequencies[0]?.value === 600);
+    const cell = tones.find(tone => tone.frequencies[0]?.value === 720);
     const home = tones.find(tone => tone.frequencies[0]?.value === 900);
-    assert.ok(click && home, 'Clicks and placing a card home produce distinct native oscillator tones');
-    for (const [tone, peak, duration] of [[click, .12, .025], [home, .18, .065]]) {
+    assert.ok(click && cell && home, 'Clicks and placing a card home produce distinct native oscillator tones');
+    for (const [tone, peak, duration] of [[click, .02, .025], [cell, .08, .06], [home, .2, .09]]) {
       assert.equal(tone.type, 'sine');
       assert.equal(Math.max(...tone.gain.map(event => event.value)), peak);
       assert.equal(tone.gain[0].value, 0);
@@ -1571,6 +1577,58 @@ async function checkSound(page, server, engine, browser) {
     assert.equal(browser.network.slice(requestStart).filter(url => new URL(url).pathname !== `${prefix}sw.js`).length, 0,
       'Click and home synthesis do not fetch assets');
 
+    // 各入力経路が同じ移動音へ到達し、失敗や履歴の再適用では再生しないことを確かめる。
+    for (const method of ['keyboard', 'mouse drag', 'touch drag', 'double-click', 'double-tap']) {
+      const touch = method.startsWith('touch') || method === 'double-tap';
+      await page.command('Emulation.setTouchEmulationEnabled', { enabled: touch, maxTouchPoints: 2 });
+      await page.command('Emulation.setDeviceMetricsOverride', { width: touch ? 390 : 1280, height: touch ? 844 : 900, deviceScaleFactor: 1, mobile: touch });
+      await loadFixture(page, orderedGame(), server.url);
+      await pointerClick(page, 'h1');
+      await page.waitFor(`soundAudit.contexts[0]?.state === 'running'`, 'audio ready for ' + method);
+      const source = position('tableau', 4, 5);
+      if (method === 'keyboard') {
+        await page.evaluate(`document.querySelector(${JSON.stringify(source)}).focus()`);
+        await key(page, 'Enter');
+        await page.evaluate(`document.querySelector(${JSON.stringify(position('cells', 0))}).focus()`);
+        await key(page, 'Enter');
+      } else if (method.endsWith('drag')) {
+        // 次のタップへスワイプの慣性判定を持ち越さず、音の経路だけを確認する。
+        await dragPointer(page, source, position('cells', 0), { touch, hold: 150 });
+      } else {
+        await doublePointer(page, source, touch);
+      }
+      assert.equal(await textOf(page, '#moves'), '1', method);
+      assert.equal(await page.evaluate('soundAudit.tones.filter(tone => tone.frequencies[0]?.value === 720).length'), 1, method);
+      assert.equal(await page.evaluate('soundAudit.tones.at(-1).frequencies[0].value'), 720, method + ' keeps the movement sound');
+    }
+    await page.command('Emulation.setTouchEmulationEnabled', { enabled: false });
+    await page.command('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+    await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
+    await pointerClick(page, position('tableau', 0, 6));
+    await pointerClick(page, position('cells', 0));
+    assert.equal(await textOf(page, '#moves'), '1', 'An occupied free cell rejects the drop');
+    await pointerClick(page, '#undo');
+    await pointerClick(page, '#redo');
+    assert.equal(await page.evaluate('soundAudit.tones.filter(tone => tone.frequencies[0]?.value === 720).length'), 1,
+      'Failed moves and Undo/Redo must not play the free-cell placement sound');
+    const beforeDisabled = await page.evaluate('soundAudit.tones.length');
+    await pointerClick(page, '#redo');
+    assert.equal(await page.evaluate('soundAudit.tones.length'), beforeDisabled, 'An already disabled button stays silent');
+    await pointerClick(page, '#undo');
+    assert.equal(await textOf(page, '#moves'), '0');
+    assert.equal(await page.evaluate('soundAudit.tones.length'), beforeDisabled + 1,
+      'The last Undo still clicks even though its handler disables the button');
+    assert.equal(await page.evaluate('soundAudit.tones.at(-1).frequencies[0].value'), 600);
+
+
+    await loadFixture(page, nearWinGame(engine), server.url);
+    await pointerClick(page, 'h1');
+    await page.waitFor(`soundAudit.contexts[0]?.state === 'running'`, 'audio ready for automatic victory');
+    await pointerClick(page, '#auto-home');
+    await waitAutomatic(page);
+    assert.equal(await page.evaluate('soundAudit.tones.length'), 1, 'An automatic victory plays only the fanfare');
+    assert.equal(await page.evaluate('soundAudit.tones[0].frequencies.length'), 6);
+
     await loadFixture(page, nearWinGame(engine), server.url);
     requestStart = browser.network.length;
     await pointerClick(page, 'h1');
@@ -1581,7 +1639,7 @@ async function checkSound(page, server, engine, browser) {
     assert.ok(fanfare, 'Placing the last card starts a short fanfare');
     assert.deepEqual(fanfare.frequencies.map(event => event.value), [523, 659, 784, 1047, 784, 1568]);
     assert.ok(Math.abs(fanfare.stops[0] - fanfare.start - .9) < 1e-6);
-    assert.equal(Math.max(...fanfare.gain.map(event => event.value)), .22);
+    assert.equal(Math.max(...fanfare.gain.map(event => event.value)), .5);
     assert.equal(fanfare.type, 'triangle');
     for (const [index, note] of fanfare.frequencies.entries()) {
       assert.ok(Math.abs(note.time - fanfare.start - index * .12) < 1e-6);
@@ -1596,7 +1654,7 @@ async function checkSound(page, server, engine, browser) {
     await page.click('#redo');
     assert.equal(await page.evaluate('soundAudit.tones.length'), completedTones, 'Redoing a win does not replay the fanfare');
     // 観測した実際の包絡線をオフライン音声エンジンにも通し、デジタル波形の振幅上限を確認する。
-    const peaks = await page.evaluate(`Promise.all(${JSON.stringify([click, home, fanfare])}.map(async tone => {
+    const levels = await page.evaluate(`Promise.all(${JSON.stringify([click, cell, home, fanfare])}.map(async tone => {
       const duration = tone.stops[0] - tone.start;
       const context = new OfflineAudioContext(1, Math.ceil(duration * 48000), 48000);
       const oscillator = context.createOscillator();
@@ -1607,11 +1665,16 @@ async function checkSound(page, server, engine, browser) {
       oscillator.connect(gain).connect(context.destination);
       oscillator.start(0); oscillator.stop(duration);
       const buffer = await context.startRendering();
-      return Math.max(...buffer.getChannelData(0).map(Math.abs));
+      const samples = buffer.getChannelData(0);
+      return { peak: Math.max(...samples.map(Math.abs)),
+        rms: Math.sqrt(samples.reduce((sum, sample) => sum + sample * sample, 0) / samples.length) };
     }))`);
-    assert.ok(peaks[0] > .11 && peaks[0] <= .12001);
-    assert.ok(peaks[1] > .17 && peaks[1] <= .18001);
-    assert.ok(peaks[2] > .20 && peaks[2] <= .22001);
+    for (const [index, limit] of [.02, .08, .2, .5].entries()) {
+      assert.ok(levels[index].peak > limit * .9 && levels[index].peak <= limit + .00001);
+      if (index) assert.ok(levels[index].rms > levels[index - 1].rms * 1.5,
+        'Rendered RMS must clearly increase: click < free cell < home < win');
+    }
+    console.log('Sound levels (click/cell/home/win): ' + JSON.stringify(levels));
 
     await pointerClick(page, '#sound-toggle');
     assert.equal(await textOf(page, '#sound-toggle'), ' 音声オフ');
@@ -1655,7 +1718,7 @@ async function checkSound(page, server, engine, browser) {
     await page.command('Page.removeScriptToEvaluateOnNewDocument', { identifier: unsupported.identifier });
     await page.navigate(server.url);
   }
-  console.log('PASS sound: audible click/home waveforms, 900 ms six-note triangle fanfare only on completion, stop/redo/mute guards, current-state labels, no audio fetch, saved mute');
+  console.log('PASS sound: click < cell < home < win rendered RMS, all cell input paths, no extra movement clicks, 900 ms six-note triangle fanfare only on completion, stop/redo/mute guards, current-state labels, no audio fetch, saved mute');
 }
 
 /** 別の実タブへ切り替え、非表示中は時計が止まり、復帰後に再開することを確認する。 */

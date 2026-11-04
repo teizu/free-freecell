@@ -22,6 +22,8 @@ let runningSince = null;
 let replacementPending = false;
 let lastCardClick = null;
 let pointerType = '';
+// 読み込み・変更時で同じ保存エラーを案内する。
+const autoSaveError = '自動移動の設定を保存できません。この画面では操作できます。';
 let settingError = '';
 let automaticRun = 0;
 let automaticAnimation = null;
@@ -32,7 +34,7 @@ try {
   find('auto-enabled').checked = resumed?.automatic ?? localStorage.getItem(`${storageKey}:auto-home`) === '1';
   if (resumed) localStorage.setItem(`${storageKey}:auto-home`, resumed.automatic ? '1' : '0');
 } catch {
-  settingError = '自動移動の設定を保存できません。この画面では操作できます。';
+  settingError = autoSaveError;
 }
 
 /** 文言は HTML として解釈せず、日本語のまま読み上げ領域へ渡す。 */
@@ -316,7 +318,7 @@ async function finishMove(message, automatic = game.started && find('auto-enable
     count += result.count;
     render();
     persist();
-    effects.home(isWon(getBoard(game)));
+    effects.move('foundations', isWon(getBoard(game)));
     if (animate) {
       const card = boardElement.querySelector(selector);
       const to = card.getBoundingClientRect();
@@ -345,7 +347,7 @@ function tryMove(from, to) {
   if (result.error) announce(result.error);
   else {
     game = result.game;
-    if (to.zone === 'foundations') effects.home(isWon(getBoard(game)));
+    effects.move(to.zone, isWon(getBoard(game)));
     finishMove('移動しました。');
   }
 }
@@ -371,7 +373,7 @@ function choosePosition(event) {
     else {
       const sentHome = getBoard(result.game).foundations.some((pile, index) => pile.length > getBoard(game).foundations[index].length);
       game = result.game;
-      if (sentHome) effects.home(isWon(getBoard(game)));
+      effects.move(sentHome ? 'foundations' : 'cells', isWon(getBoard(game)));
       finishMove('移動しました。');
     }
     return;
@@ -465,7 +467,7 @@ find('auto-enabled').addEventListener('change', () => {
     localStorage.setItem(`${storageKey}:auto-home`, find('auto-enabled').checked ? '1' : '0');
     settingError = '';
   } catch {
-    settingError = '自動移動の設定を保存できません。この画面では操作できます。';
+    settingError = autoSaveError;
   }
   settleTime();
   finishMove(find('auto-enabled').checked ? '自動移動をオンにしました。' : '自動移動をオフにしました。');
@@ -520,7 +522,7 @@ setInterval(() => {
 
 render();
 if (restored.error) announce(restored.error);
-else if (isWon(getBoard(game))) announce('クリア済みのゲームを復元しました。「もう一局遊ぶ」で始められます。');
+else if (isWon(getBoard(game))) announce('クリア済みです。「もう一局遊ぶ」で次の対局へ。');
 else if (restored.game) announce('保存したゲームを復元しました。');
 persist();
 setupOffline((status) => { find('offline-status').textContent = status; }, find('apply-update'), prepareUpdate);

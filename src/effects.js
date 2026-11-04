@@ -35,7 +35,8 @@ export function setupEffects(board, button, key) {
   }
 
   /**
-   * 操作音は正弦波、クリアは明るい三角波の 6 音を約 900ms で鳴らす。
+   * クリア > ホーム > フリーセル > クリックの順に、振幅と発音時間で強弱を付ける。
+   * クリアは明るい三角波の 6 音を約 900ms、それ以外は短い正弦波で鳴らす。
    * 許可前の音は溜めずに省略し、次の発音やミュートでは予約済みの残音も止める。
    */
   function play(kind = 'click') {
@@ -44,19 +45,20 @@ export function setupEffects(board, button, key) {
     const oscillator = context.createOscillator();
     const gain = context.createGain();
     const now = context.currentTime;
-    const home = kind === 'home';
+    const home = kind === 'foundations';
+    const cell = kind === 'cells';
     const completed = kind === 'win';
     // ド・ミ・ソ・高いド・ソ・高いソ。最後は 1 オクターブ跳び、長く響かせる。
-    const notes = completed ? [523, 659, 784, 1047, 784, 1568] : [home ? 900 : 600];
+    const notes = completed ? [523, 659, 784, 1047, 784, 1568] : [home ? 900 : cell ? 720 : 600];
     if (completed) oscillator.type = 'triangle';
-    const duration = completed ? .3 : home ? .065 : .025;
+    const duration = completed ? .3 : home ? .09 : cell ? .06 : .025;
     notes.forEach((frequency, index) => {
       const start = now + index * .12;
       const length = completed && index < notes.length - 1 ? .1 : duration;
       oscillator.frequency.setValueAtTime(frequency, start);
       if (home) oscillator.frequency.linearRampToValueAtTime(1200, start + duration);
       gain.gain.setValueAtTime(0, start);
-      gain.gain.linearRampToValueAtTime(completed ? .22 : home ? .18 : .12, start + .004);
+      gain.gain.linearRampToValueAtTime(completed ? .5 : home ? .2 : cell ? .08 : .02, start + .004);
       gain.gain.linearRampToValueAtTime(0, start + length);
     });
     oscillator.connect(gain).connect(context.destination);
@@ -110,11 +112,13 @@ export function setupEffects(board, button, key) {
     if (enabled) unlock(event);
   });
   for (const type of ['pointerdown', 'keydown']) document.addEventListener(type, unlock, true);
-  // ドラッグ後の疑似 click を取り除くリスナーより後に登録し、移動完了音より先に鳴らす。
+  // 移動処理後に通知を受け、既に移動音が鳴っていればクリック音で上書きしない。
+  // ドラッグ後の疑似 click はドラッグ側で除外される。
+  // disabled の実 click はブラウザーが止める。操作後に disabled になった Undo は鳴らす。
   document.addEventListener('click', (event) => {
     const target = event.target.closest('button, input, summary');
-    if (event.isTrusted && target && target !== button && !target.disabled) play();
-  }, true);
+    if (event.isTrusted && !voice && target && target !== button) play();
+  });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) silence();
     win(won);
@@ -123,5 +127,11 @@ export function setupEffects(board, button, key) {
   window.addEventListener('pagehide', () => { silence(); stopWin(); });
   window.addEventListener('pageshow', () => win(won));
   // クリア音はホーム移動を確定した呼び出し元だけが指定し、復元・再描画では鳴らさない。
-  return { home: (completed = false) => play(completed ? 'win' : 'home'), win };
+  return {
+    /** 成功した移動先だけを音へ変換し、場札への移動では専用音を鳴らさない。 */
+    move(zone, completed = false) {
+      if (zone === 'foundations' || zone === 'cells') play(completed ? 'win' : zone);
+    },
+    win,
+  };
 }
