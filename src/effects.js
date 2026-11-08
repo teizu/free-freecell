@@ -35,8 +35,8 @@ export function setupEffects(board, button, key) {
   }
 
   /**
-   * クリア > ホーム > フリーセル > クリックの順に、振幅と発音時間で強弱を付ける。
-   * クリアは明るい三角波の 6 音を約 900ms、それ以外は短い正弦波で鳴らす。
+   * クリアだけ gain 0.5 の三角波、操作・移動・開始は gain 0.1 の正弦波にする。
+   * 移動先を音程で区別し、開始は 3 音、クリアは 6 音のフレーズで知らせる。
    * 許可前の音は溜めずに省略し、次の発音やミュートでは予約済みの残音も止める。
    */
   function play(kind = 'click') {
@@ -46,19 +46,19 @@ export function setupEffects(board, button, key) {
     const gain = context.createGain();
     const now = context.currentTime;
     const home = kind === 'foundations';
-    const cell = kind === 'cells';
     const completed = kind === 'win';
-    // ド・ミ・ソ・高いド・ソ・高いソ。最後は 1 オクターブ跳び、長く響かせる。
-    const notes = completed ? [523, 659, 784, 1047, 784, 1568] : [home ? 900 : cell ? 720 : 600];
+    // 開始はド・ミ・ソ。クリアはさらに高いド・ソ・高いソと続け、最後を長く響かせる。
+    const notes = completed ? [523, 659, 784, 1047, 784, 1568] : kind === 'start' ? [523, 659, 784]
+      : [home ? 900 : kind === 'cells' ? 720 : kind === 'tableau' ? 660 : 600];
     if (completed) oscillator.type = 'triangle';
-    const duration = completed ? .3 : home ? .09 : cell ? .06 : .025;
+    const duration = completed ? .3 : kind === 'start' ? .1 : home ? .09 : kind === 'click' ? .025 : .06;
     notes.forEach((frequency, index) => {
       const start = now + index * .12;
       const length = completed && index < notes.length - 1 ? .1 : duration;
       oscillator.frequency.setValueAtTime(frequency, start);
       if (home) oscillator.frequency.linearRampToValueAtTime(1200, start + duration);
       gain.gain.setValueAtTime(0, start);
-      gain.gain.linearRampToValueAtTime(completed ? .5 : home ? .2 : cell ? .08 : .02, start + .004);
+      gain.gain.linearRampToValueAtTime(completed ? .5 : .1, start + .004);
       gain.gain.linearRampToValueAtTime(0, start + length);
     });
     oscillator.connect(gain).connect(context.destination);
@@ -128,10 +128,11 @@ export function setupEffects(board, button, key) {
   window.addEventListener('pageshow', () => win(won));
   // クリア音はホーム移動を確定した呼び出し元だけが指定し、復元・再描画では鳴らさない。
   return {
-    /** 成功した移動先だけを音へ変換し、場札への移動では専用音を鳴らさない。 */
+    /** 成功した移動先を音へ変換し、クリックとドラッグで同じ音を鳴らす。 */
     move(zone, completed = false) {
-      if (zone === 'foundations' || zone === 'cells') play(completed ? 'win' : zone);
+      play(completed ? 'win' : zone);
     },
+    start: () => play('start'),
     win,
   };
 }

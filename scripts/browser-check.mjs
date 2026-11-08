@@ -1497,7 +1497,7 @@ async function checkHistoryShortcuts(page, server) {
   console.log('PASS history shortcuts: native Ctrl-Z/Ctrl-Y, history bounds, Alt/input/textarea/select/contenteditable/IME/dialog guards');
 }
 
-/** ネイティブ Web Audio の生成と波形を計測し、音量・6 音の完了フレーズ・許可・消音・保存を確認する。 */
+/** ネイティブ Web Audio の生成と波形を計測し、共通ゲイン・移動音・開始と完了フレーズ・許可・消音・保存を確認する。 */
 async function checkSound(page, server, engine, browser) {
   const { identifier } = await page.command('Page.addScriptToEvaluateOnNewDocument', {
     source: `(() => {
@@ -1562,7 +1562,7 @@ async function checkSound(page, server, engine, browser) {
     const cell = tones.find(tone => tone.frequencies[0]?.value === 720);
     const home = tones.find(tone => tone.frequencies[0]?.value === 900);
     assert.ok(click && cell && home, 'Clicks and placing a card home produce distinct native oscillator tones');
-    for (const [tone, peak, duration] of [[click, .02, .025], [cell, .08, .06], [home, .2, .09]]) {
+    for (const [tone, peak, duration] of [[click, .1, .025], [cell, .1, .06], [home, .1, .09]]) {
       assert.equal(tone.type, 'sine');
       assert.equal(Math.max(...tone.gain.map(event => event.value)), peak);
       assert.equal(tone.gain[0].value, 0);
@@ -1621,6 +1621,82 @@ async function checkSound(page, server, engine, browser) {
     assert.equal(await page.evaluate('soundAudit.tones.at(-1).frequencies[0].value'), 600);
 
 
+    // 同じ成功移動なら、クリック・マウス・タッチで専用音を一度だけ鳴らす。
+    let tableauTone;
+    for (const method of ['click', 'mouse drag', 'touch drag']) {
+      const touch = method === 'touch drag';
+      await page.command('Emulation.setTouchEmulationEnabled', { enabled: touch, maxTouchPoints: 2 });
+      await page.command('Emulation.setDeviceMetricsOverride', { width: touch ? 390 : 1280, height: touch ? 844 : 900, deviceScaleFactor: 1, mobile: touch });
+      for (const zone of ['tableau', 'foundations']) {
+        await loadFixture(page, orderedGame(), server.url);
+        await pointerClick(page, 'h1');
+        await page.waitFor(`soundAudit.contexts[0]?.state === 'running'`, 'audio ready for ' + method + '/' + zone);
+        const source = position('tableau', 0, 6);
+        // 黒 A を赤 2 の上へ置くか、ホームへ送る。
+        const target = zone === 'tableau' ? position('tableau', 5, 5) : position('foundations', 0);
+        if (method === 'click') await pointerClick(page, source);
+        const before = await page.evaluate('soundAudit.tones.length');
+        if (method === 'click') await pointerClick(page, target);
+        else await dragPointer(page, source, target, { touch, hold: 150 });
+        assert.equal(await textOf(page, '#moves'), '1', method + '/' + zone);
+        assert.equal(await page.evaluate('soundAudit.tones.length'), before + 1, 'One dedicated tone: ' + method + '/' + zone);
+        const tone = await page.evaluate('soundAudit.tones.at(-1)');
+        assert.equal(tone.frequencies[0].value, zone === 'tableau' ? 660 : 900);
+        assert.equal(Math.max(...tone.gain.map(event => event.value)), .1);
+        assert.equal(tone.type, 'sine');
+        assert.ok(Math.abs(tone.stops[0] - tone.start - (zone === 'tableau' ? .06 : .09)) < 1e-6);
+        if (zone === 'tableau') tableauTone = tone;
+        // 同じ移動の取り消しと不正なドロップでは、成功音を再生しない。
+        await pointerClick(page, '#undo');
+        if (method !== 'click') {
+          const beforeInvalid = await page.evaluate('soundAudit.tones.length');
+          await dragPointer(page, source, position('tableau', 1, 6), { touch, hold: 150 });
+          assert.equal(await page.evaluate('soundAudit.tones.length'), beforeInvalid);
+          assert.equal(await textOf(page, '#moves'), '0');
+        }
+      }
+    }
+    await page.command('Emulation.setTouchEmulationEnabled', { enabled: false });
+    await page.command('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+
+    // 新規配りの確定だけが開始音の契機。確認の表示・取消・リセット・復元では鳴らさない。
+    let startTone;
+    for (const state of ['unstarted', 'playing', 'won']) {
+      await loadFixture(page, state === 'unstarted' ? orderedGame() : nearWinGame(engine), server.url);
+      if (state === 'won') {
+        await page.click('#auto-home');
+        await waitAutomatic(page);
+      }
+      await pointerClick(page, 'h1');
+      await page.waitFor(`soundAudit.contexts[0]?.state === 'running'`, 'audio ready for new game');
+      assert.equal(await page.evaluate('soundAudit.tones.length'), 0, 'Restoration stays silent');
+      await pointerClick(page, state === 'won' ? '#win-new' : '#new-game');
+      if (state === 'playing') {
+        assert.equal(await page.evaluate('soundAudit.tones.filter(tone => tone.frequencies.length === 3).length'), 0);
+        await pointerClick(page, '#confirm-cancel');
+        assert.equal(await page.evaluate('soundAudit.tones.filter(tone => tone.frequencies.length === 3).length'), 0);
+        await pointerClick(page, '#new-game');
+        await pointerClick(page, '#confirm-accept');
+      }
+      await page.waitFor('soundAudit.tones.some(tone => tone.frequencies.length === 3)', 'three-note start');
+      assert.equal(await page.evaluate('soundAudit.tones.filter(tone => tone.frequencies.length === 3).length'), 1);
+      startTone = await page.evaluate('soundAudit.tones.find(tone => tone.frequencies.length === 3)');
+      assert.deepEqual(startTone.frequencies.map(event => event.value), [523, 659, 784]);
+      assert.equal(startTone.type, 'sine');
+      assert.equal(Math.max(...startTone.gain.map(event => event.value)), .1);
+      assert.ok(Math.abs(startTone.stops[0] - startTone.start - .34) < 1e-6);
+      for (const [index, note] of startTone.frequencies.entries()) {
+        assert.ok(Math.abs(note.time - startTone.start - index * .12) < 1e-6);
+        assert.ok(Math.abs(startTone.gain[index * 3 + 2].time - note.time - .1) < 1e-6);
+      }
+      assert.equal(await textOf(page, '#moves'), '0');
+      assert.equal(await textOf(page, '#time'), '0:00');
+      await pointerClick(page, '#restart');
+      assert.equal(await page.evaluate('soundAudit.tones.filter(tone => tone.frequencies.length === 3).length'), 1,
+        'Restarting the same deal must not replay the new-deal phrase');
+    }
+
+
     await loadFixture(page, nearWinGame(engine), server.url);
     await pointerClick(page, 'h1');
     await page.waitFor(`soundAudit.contexts[0]?.state === 'running'`, 'audio ready for automatic victory');
@@ -1654,7 +1730,7 @@ async function checkSound(page, server, engine, browser) {
     await page.click('#redo');
     assert.equal(await page.evaluate('soundAudit.tones.length'), completedTones, 'Redoing a win does not replay the fanfare');
     // 観測した実際の包絡線をオフライン音声エンジンにも通し、デジタル波形の振幅上限を確認する。
-    const levels = await page.evaluate(`Promise.all(${JSON.stringify([click, cell, home, fanfare])}.map(async tone => {
+    const levels = await page.evaluate(`Promise.all(${JSON.stringify([click, tableauTone, cell, home, startTone, fanfare])}.map(async tone => {
       const duration = tone.stops[0] - tone.start;
       const context = new OfflineAudioContext(1, Math.ceil(duration * 48000), 48000);
       const oscillator = context.createOscillator();
@@ -1669,12 +1745,12 @@ async function checkSound(page, server, engine, browser) {
       return { peak: Math.max(...samples.map(Math.abs)),
         rms: Math.sqrt(samples.reduce((sum, sample) => sum + sample * sample, 0) / samples.length) };
     }))`);
-    for (const [index, limit] of [.02, .08, .2, .5].entries()) {
+    for (const [index, limit] of [.1, .1, .1, .1, .1, .5].entries()) {
       assert.ok(levels[index].peak > limit * .9 && levels[index].peak <= limit + .00001);
-      if (index) assert.ok(levels[index].rms > levels[index - 1].rms * 1.5,
-        'Rendered RMS must clearly increase: click < free cell < home < win');
+      assert.ok(levels[index].rms > 0 && levels[index].rms < limit);
+      if (index < 5) assert.ok(levels[5].rms > levels[index].rms * 2, 'The win remains louder than ordinary effects');
     }
-    console.log('Sound levels (click/cell/home/win): ' + JSON.stringify(levels));
+    console.log('Sound levels (click/tableau/cell/home/start/win): ' + JSON.stringify(levels));
 
     await pointerClick(page, '#sound-toggle');
     assert.equal(await textOf(page, '#sound-toggle'), ' 音声オフ');
@@ -1684,6 +1760,8 @@ async function checkSound(page, server, engine, browser) {
     assert.equal(await page.evaluate(`localStorage.getItem(${JSON.stringify(soundStorageKey)})`), '0');
     const mutedCount = await page.evaluate('soundAudit.tones.length');
     await pointerClick(page, '#undo');
+    await pointerClick(page, '#new-game');
+    await pointerClick(page, '#confirm-accept');
     assert.equal(await page.evaluate('soundAudit.tones.length'), mutedCount, 'Muted controls do not create sound nodes');
     assert.equal(browser.network.slice(requestStart).filter(url => new URL(url).pathname !== `${prefix}sw.js`).length, 0, 'Sound synthesis does not fetch assets');
     await page.navigate(server.url);
@@ -1718,7 +1796,7 @@ async function checkSound(page, server, engine, browser) {
     await page.command('Page.removeScriptToEvaluateOnNewDocument', { identifier: unsupported.identifier });
     await page.navigate(server.url);
   }
-  console.log('PASS sound: click < cell < home < win rendered RMS, all cell input paths, no extra movement clicks, 900 ms six-note triangle fanfare only on completion, stop/redo/mute guards, current-state labels, no audio fetch, saved mute');
+  console.log('PASS sound: gain 0.1 except win 0.5, shared click/drag tones for all destinations, three-note start only on new deal, no extra movement clicks, 900 ms six-note triangle fanfare only on completion, stop/redo/mute guards, current-state labels, no audio fetch, saved mute');
 }
 
 /** 別の実タブへ切り替え、非表示中は時計が止まり、復帰後に再開することを確認する。 */
@@ -2005,7 +2083,10 @@ async function prepareUpdate(page, server, temp) {
   const source = join(temp, 'source');
   await cp(join(root, 'src'), source, { recursive: true });
   const css = await readFile(join(source, 'styles.css'), 'utf8');
-  await writeFile(join(source, 'styles.css'), `${css}\n:root { --test-update: 1; }\n`);
+  // 上限間際でも更新経路を試せるよう、規則を追加せず既存の背景色だけを置き換える。
+  const updatedCSS = css.replace('#f6f5ef', '#f6f5ee');
+  assert.notEqual(updatedCSS, css, 'The update fixture must change the stylesheet');
+  await writeFile(join(source, 'styles.css'), updatedCSS);
   const oldStylesheet = await page.evaluate(`document.querySelector('link[rel="stylesheet"]').href`);
   const originalCaches = await page.evaluate('caches.keys()');
   const updateStart = server.requests.length;

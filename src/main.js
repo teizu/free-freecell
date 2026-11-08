@@ -427,6 +427,8 @@ async function replaceGame(restarting) {
     runningSince = null;
     game = restarting ? restart(game) : createGame();
     finishMove(restarting ? '同じ配りで最初から始めました。' : '新しいゲームを始めました。');
+    // 新しい配りの確定時だけ鳴らし、確認の取り消し・リセット・保存局の復元とは区別する。
+    if (!restarting) effects.start();
   } finally {
     replacementPending = false;
   }
