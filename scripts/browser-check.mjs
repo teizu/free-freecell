@@ -504,13 +504,13 @@ async function checkDragAndDrop(page, server, engine, browser) {
     assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('cells', 0))}).dataset.card`), '0');
     assert.equal(await page.evaluate(`document.querySelectorAll('#board [aria-pressed="true"]').length`), 0, `${label}: the generated click must not select again`);
     await page.click('#undo');
-    assert.equal(await textOf(page, '#moves'), '0');
-    await page.click('#redo');
-    assert.equal(await textOf(page, '#moves'), '1');
-    await dragPointer(page, position('tableau', 1, 6), position('cells', 0), { touch });
-    assert.equal(await textOf(page, '#moves'), '1', `${label}: an occupied free cell must reject the drop`);
-    await dragPointer(page, position('cells', 0), position('foundations', 0), { touch });
     assert.equal(await textOf(page, '#moves'), '2');
+    await page.click('#redo');
+    assert.equal(await textOf(page, '#moves'), '3');
+    await dragPointer(page, position('tableau', 1, 6), position('cells', 0), { touch });
+    assert.equal(await textOf(page, '#moves'), '3', `${label}: an occupied free cell must reject the drop`);
+    await dragPointer(page, position('cells', 0), position('foundations', 0), { touch });
+    assert.equal(await textOf(page, '#moves'), '4');
     assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('foundations', 0))}).dataset.card`), '0');
     assert.equal(browser.network.slice(networkStart).filter(url => new URL(url).pathname !== `${prefix}sw.js`).length, 0,
       `${label}: dragging must not fetch resources`);
@@ -539,9 +539,9 @@ async function checkDragAndDrop(page, server, engine, browser) {
     assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('tableau', 1, 7))}).dataset.card`), '19');
     assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('tableau', 1, 8))}).dataset.card`), '5');
     await page.click('#undo');
-    assert.equal(await textOf(page, '#moves'), '0');
+    assert.equal(await textOf(page, '#moves'), '2');
     await dragPointer(page, position('tableau', 0, 5), position('cells', 0), { touch, exposedEdge: true, cards: 2 });
-    assert.equal(await textOf(page, '#moves'), '0', `${label}: a group cannot enter one free cell`);
+    assert.equal(await textOf(page, '#moves'), '2', `${label}: a group cannot enter one free cell`);
     assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('tableau', 0, 6))}).dataset.card`), '5');
 
     // 移動先の規則違反・盤外・中止は履歴を作らず、続く通常操作も受け付ける。
@@ -565,7 +565,7 @@ async function checkDragAndDrop(page, server, engine, browser) {
     assert.equal(await textOf(page, '#moves'), '3', `${label}: both automatic cards follow the drop despite its suppressed click`);
     assert.equal(await textOf(page, '#progress'), '2');
     await page.click('#undo');
-    assert.equal(await textOf(page, '#moves'), '2');
+    assert.equal(await textOf(page, '#moves'), '4');
     assert.equal(await textOf(page, '#progress'), '1');
     await page.click('#auto-enabled');
     console.log(`PASS drag ${label}: free cell/home/tableau, two-card run, illegal/outside/cancel, click suppression, undo/redo, automatic home, no gameplay network`);
@@ -669,7 +669,7 @@ async function checkPinchZoom(page, server, browser) {
   assert.equal(await page.evaluate(`document.querySelectorAll('#board [aria-pressed="true"], .dragging').length`), 0);
   assert.ok(Math.abs(await page.evaluate('visualViewport.scale') - scale) < 0.01, 'Dragging must preserve the chosen zoom');
   await page.click('#undo');
-  assert.equal(await textOf(page, '#moves'), '0');
+  assert.equal(await textOf(page, '#moves'), '2');
   await page.command('Emulation.setTouchEmulationEnabled', { enabled: false });
   await page.command('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
   await page.navigate(server.url);
@@ -877,21 +877,21 @@ async function checkMaximization(page, server, browser, screenshots) {
   assert.equal(await page.evaluate('window.maximizeNode === document.querySelector("#maximize")'), true,
     'Rendering cards must preserve the live maximize control');
   await key(page, 'z', 2);
-  assert.equal(await textOf(page, '#moves'), '0');
+  assert.equal(await textOf(page, '#moves'), '2');
   await key(page, 'y', 2);
-  assert.equal(await textOf(page, '#moves'), '1');
+  assert.equal(await textOf(page, '#moves'), '3');
   assert.equal(await page.evaluate(active), true, 'History shortcuts must not leave maximum size');
   await page.command('Emulation.setDeviceMetricsOverride', { width: 844, height: 390, deviceScaleFactor: 1, mobile: true });
   await page.evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))`);
   await checkBoardBounds(page, 'maximized landscape');
   await sidebar('landscape');
   await visibleToggle('after changing orientation');
-  assert.equal(await textOf(page, '#moves'), '1');
+  assert.equal(await textOf(page, '#moves'), '3');
   const { data } = await page.command('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
   await writeFile(join(screenshots, 'freecell-maximized-landscape.png'), Buffer.from(data, 'base64'));
   await key(page, 'Escape');
   await page.waitFor(`!(${active}) && !document.fullscreenElement && !document.querySelector('#maximize').disabled`, 'Escape leaves maximum size');
-  assert.equal(await textOf(page, '#moves'), '1', 'Leaving maximum size keeps the game and history');
+  assert.equal(await textOf(page, '#moves'), '3', 'Leaving maximum size keeps the game and history');
   await toggle(true);
   await page.command('Emulation.setTouchEmulationEnabled', { enabled: false });
   await page.command('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
@@ -967,18 +967,18 @@ async function checkMaximization(page, server, browser, screenshots) {
   await writeFile(join(screenshots, 'freecell-score-playing.png'), Buffer.from(scoreImage, 'base64'));
   await touchPoint(page, await inputPoint(page, '#undo'));
   await page.waitFor(`document.querySelector('#progress').textContent === '0'`, 'sidebar home count undoes');
-  assert.equal(await textOf(page, '#moves'), '1');
+  assert.equal(await textOf(page, '#moves'), '3');
   await touchPoint(page, await inputPoint(page, '#undo'));
-  await page.waitFor(`document.querySelector('#moves').textContent === '0'`, 'sidebar Undo applied');
-  assert.equal(await textOf(page, '#moves'), '0', 'Sidebar Undo must use the existing history');
+  await page.waitFor(`document.querySelector('#moves').textContent === '4'`, 'sidebar Undo applied');
+  assert.equal(await textOf(page, '#moves'), '4', 'Sidebar Undo must use the existing history');
   await touchPoint(page, await inputPoint(page, '#redo'));
-  await page.waitFor(`document.querySelector('#moves').textContent === '1'`, 'sidebar Redo applied');
-  assert.equal(await textOf(page, '#moves'), '1', 'Sidebar Redo must restore that move');
+  await page.waitFor(`document.querySelector('#moves').textContent === '5'`, 'sidebar Redo applied');
+  assert.equal(await textOf(page, '#moves'), '5', 'Sidebar Redo must restore that move');
   await touchPoint(page, await inputPoint(page, '#restart'));
   await visibleDialog();
   await touchPoint(page, await inputPoint(page, '#confirm-cancel'));
   await page.waitFor(`!document.querySelector('#confirm-dialog').open`, 'fullscreen reset cancelled');
-  assert.equal(await textOf(page, '#moves'), '1');
+  assert.equal(await textOf(page, '#moves'), '5');
   await touchPoint(page, await inputPoint(page, '#restart'));
   await visibleDialog();
   await touchPoint(page, await inputPoint(page, '#confirm-accept'));
@@ -1143,7 +1143,7 @@ function gameWithTails(tails) {
   return { version: 1, history: [{ tableau, cells: Array(4).fill(null), foundations: Array.from({ length: 4 }, () => []) }], cursor: 0, elapsedMs: 0, started: false };
 }
 
-/** 自動送りの表示と期待する履歴位置が揃うまで待ち、固定秒数の待機を避ける。 */
+/** 自動送りの表示と期待する累積手数が揃うまで待ち、固定秒数の待機を避ける。 */
 async function waitAutomatic(page, moves = null) {
   const expected = moves === null ? 'true' : `document.querySelector('#moves').textContent === '${moves}'`;
   await page.waitFor(`!document.querySelector('.auto-moving') && (${expected})`, 'automatic move completion');
@@ -1195,9 +1195,9 @@ async function checkAutomaticHome(page, server, engine, browser) {
   assert.equal(await textOf(page, '#moves'), '52');
   assert.equal(await textOf(page, '#progress'), '52');
   await page.click('#undo');
-  assert.equal(await textOf(page, '#moves'), '51', 'An automatic move is one undo step');
+  await assertHistory(page, 53, 51);
   await page.click('#redo');
-  assert.equal(await textOf(page, '#moves'), '52');
+  await assertHistory(page, 54, 52);
   assert.equal(browser.network.slice(requestStart).filter(url => new URL(url).pathname !== `${prefix}sw.js`).length, 0);
 
   // スペードの 3 は合法でも、赤の A が未完了なのでボタンでは動かさない。
@@ -1238,22 +1238,22 @@ async function checkAutomaticHome(page, server, engine, browser) {
   assert.equal(await textOf(page, '#moves'), '2', 'A successful move triggers the newly exposed safe card');
   assert.equal(await textOf(page, '#progress'), '1');
   await page.click('#undo');
-  assert.equal(await textOf(page, '#moves'), '1');
+  assert.equal(await textOf(page, '#moves'), '3');
   assert.equal(await textOf(page, '#progress'), '0', 'Undo must not immediately resend the card');
   await page.navigate(server.url);
   assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
-  assert.equal(await textOf(page, '#moves'), '1', 'Restoring a saved game must not resend the card');
+  assert.equal(await textOf(page, '#moves'), '3', 'Restoring a saved game must not resend the card');
   await page.click('#redo');
-  assert.equal(await textOf(page, '#moves'), '2');
+  assert.equal(await textOf(page, '#moves'), '4');
   await page.click('#undo');
   await page.click('#undo');
   await page.click('#redo');
-  assert.equal(await textOf(page, '#moves'), '1', 'Redo must stop before the separate automatic history step');
+  assert.equal(await textOf(page, '#moves'), '7', 'Redo must stop before the separate automatic history step');
   assert.equal(await textOf(page, '#progress'), '0');
   await page.click('#auto-enabled');
   await page.click('#auto-enabled');
-  await waitAutomatic(page, 2);
-  assert.equal(await textOf(page, '#moves'), '2', 'Enabling the checkbox immediately sends safe cards');
+  await waitAutomatic(page, 8);
+  assert.equal(await textOf(page, '#moves'), '8', 'Enabling the checkbox immediately sends safe cards');
   await page.click('#auto-enabled');
   await page.navigate(server.url);
   assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), false);
@@ -1288,7 +1288,7 @@ async function checkAutomaticAnimation(page, server, browser) {
   const interrupted = await page.evaluate(`(() => {
     const before = Number(document.querySelector('#moves').textContent);
     document.querySelector('#undo').click();
-    return before - 1;
+    return before + 1;
   })()`);
   await pause(350);
   assert.equal(await textOf(page, '#moves'), String(interrupted), 'Undo must stop all pending automatic moves');
@@ -1391,20 +1391,20 @@ async function checkControls(page, server, browser) {
   await key(page, 'Escape');
   await page.evaluate(`document.querySelector('#undo').focus()`);
   await page.click('#undo');
-  assert.equal(await textOf(page, '#moves'), '0');
+  assert.equal(await textOf(page, '#moves'), '2');
   assert.equal(await page.evaluate(`document.activeElement.tagName === 'BUTTON' && !document.activeElement.disabled`), true);
   await page.evaluate(`document.querySelector('#redo').focus()`);
   await page.click('#redo');
-  assert.equal(await textOf(page, '#moves'), '1');
+  assert.equal(await textOf(page, '#moves'), '3');
   assert.equal(await page.evaluate(`document.activeElement.tagName === 'BUTTON' && !document.activeElement.disabled`), true);
 
   await page.click(position('cells', 0));
   await page.click(position('foundations', 0));
-  assert.equal(await textOf(page, '#moves'), '2');
+  assert.equal(await textOf(page, '#moves'), '4');
   await page.click('#undo');
   await page.click(position('cells', 0));
   await page.click(position('cells', 1));
-  assert.equal(await textOf(page, '#moves'), '2');
+  await assertHistory(page, 6, 2);
   assert.equal(await page.evaluate(`document.querySelector('#redo').disabled`), true);
 
   await page.waitFor(`document.querySelector('#time').textContent !== '0:00'`, 'running clock', 3000);
@@ -1415,7 +1415,7 @@ async function checkControls(page, server, browser) {
   assert.equal(await textOf(page, '#confirm-cancel'), 'リセットしない');
   assert.equal(await textOf(page, '#confirm-accept'), 'リセットする');
   await page.click('#confirm-cancel');
-  assert.equal(await textOf(page, '#moves'), '2');
+  assert.equal(await textOf(page, '#moves'), '6');
   await page.click('#restart');
   await page.click('#confirm-accept');
   await page.waitFor(`document.querySelector('#moves').textContent === '0'`, 'restart confirmation');
@@ -1445,27 +1445,41 @@ async function checkControls(page, server, browser) {
   console.log('PASS controls: keyboard, illegal move, undo/redo branching, restart/new confirmation, timer, zero gameplay requests');
 }
 
+/** 累積手数と保存された履歴位置を別々に検証し、加算だけ成功する不具合も検出する。 */
+async function assertHistory(page, actions, cursor) {
+  assert.equal(await textOf(page, '#moves'), String(actions));
+  assert.equal(await page.evaluate(`JSON.parse(localStorage.getItem(${JSON.stringify(storageKey)})).cursor`), cursor);
+}
+
 /** 実キー入力で履歴を動かし、編集・変換・確認中の入力を奪わないことを確かめる。 */
 async function checkHistoryShortcuts(page, server) {
   await loadFixture(page, orderedGame(), server.url);
   await page.click(position('tableau', 0, 6));
   await page.click(position('cells', 0));
   await key(page, 'z', 2);
-  assert.equal(await textOf(page, '#moves'), '0', 'Ctrl-Z undoes one move');
+  assert.equal(await textOf(page, '#moves'), '2', 'Ctrl-Z undoes one move');
+  await assertHistory(page, 2, 0);
   await key(page, 'z', 2);
-  assert.equal(await textOf(page, '#moves'), '0', 'Ctrl-Z at the first position is harmless');
+  assert.equal(await textOf(page, '#moves'), '2', 'Ctrl-Z at the first position is harmless');
+  await assertHistory(page, 2, 0);
   await key(page, 'y', 2);
-  assert.equal(await textOf(page, '#moves'), '1', 'Ctrl-Y redoes one move');
+  assert.equal(await textOf(page, '#moves'), '3', 'Ctrl-Y redoes one move');
+  await assertHistory(page, 3, 1);
   await key(page, 'y', 2);
-  assert.equal(await textOf(page, '#moves'), '1', 'Ctrl-Y at the last position is harmless');
+  assert.equal(await textOf(page, '#moves'), '3', 'Ctrl-Y at the last position is harmless');
+  await assertHistory(page, 3, 1);
   await key(page, 'z', 4);
-  assert.equal(await textOf(page, '#moves'), '0', 'Command-Z also undoes one move');
+  assert.equal(await textOf(page, '#moves'), '4', 'Command-Z also undoes one move');
+  await assertHistory(page, 4, 0);
   await key(page, 'y', 4);
-  assert.equal(await textOf(page, '#moves'), '1', 'Command-Y also redoes one move');
+  assert.equal(await textOf(page, '#moves'), '5', 'Command-Y also redoes one move');
+  await assertHistory(page, 5, 1);
   await key(page, 'z', 3);
-  assert.equal(await textOf(page, '#moves'), '1', 'Ctrl-Alt-Z must not be treated as Undo');
+  assert.equal(await textOf(page, '#moves'), '5', 'Ctrl-Alt-Z must not be treated as Undo');
+  await assertHistory(page, 5, 1);
   await key(page, 'z', 10);
-  assert.equal(await textOf(page, '#moves'), '1', 'Ctrl-Shift-Z must not be treated as Undo');
+  assert.equal(await textOf(page, '#moves'), '5', 'Ctrl-Shift-Z must not be treated as Undo');
+  await assertHistory(page, 5, 1);
 
   for (const tag of ['input', 'textarea', 'select', 'div']) {
     await page.evaluate(`(() => {
@@ -1476,7 +1490,7 @@ async function checkHistoryShortcuts(page, server) {
       input.focus();
     })()`);
     await key(page, 'z', 2);
-    assert.equal(await textOf(page, '#moves'), '1', `${tag}: Ctrl-Z is left to the editor`);
+    assert.equal(await textOf(page, '#moves'), '5', `${tag}: Ctrl-Z is left to the editor`);
     await page.evaluate(`document.querySelector('#shortcut-editable').remove()`);
   }
   const composing = await page.evaluate(`(() => {
@@ -1484,16 +1498,19 @@ async function checkHistoryShortcuts(page, server) {
     document.body.dispatchEvent(event);
     return { prevented: event.defaultPrevented, moves: document.querySelector('#moves').textContent };
   })()`);
-  assert.deepEqual(composing, { prevented: false, moves: '1' }, 'IME composition must not be consumed by the history shortcut');
+  assert.deepEqual(composing, { prevented: false, moves: '5' }, 'IME composition must not be consumed by the history shortcut');
   await page.click('#restart');
   await key(page, 'z', 2);
-  assert.equal(await textOf(page, '#moves'), '1', 'A confirmation dialog blocks board history shortcuts');
+  assert.equal(await textOf(page, '#moves'), '5', 'A confirmation dialog blocks board history shortcuts');
+  await assertHistory(page, 5, 1);
   await page.click('#confirm-cancel');
   await page.evaluate(`document.querySelector('#auto-enabled').focus()`);
   await key(page, 'z', 2);
-  assert.equal(await textOf(page, '#moves'), '0', 'Focusing the automatic checkbox must not block Undo');
+  assert.equal(await textOf(page, '#moves'), '6', 'Focusing the automatic checkbox must not block Undo');
+  await assertHistory(page, 6, 0);
   await key(page, 'y', 2);
-  assert.equal(await textOf(page, '#moves'), '1', 'Shortcuts recover after closing the dialog');
+  assert.equal(await textOf(page, '#moves'), '7', 'Shortcuts recover after closing the dialog');
+  await assertHistory(page, 7, 1);
   console.log('PASS history shortcuts: native Ctrl-Z/Ctrl-Y, history bounds, Alt/input/textarea/select/contenteditable/IME/dialog guards');
 }
 
@@ -1615,7 +1632,7 @@ async function checkSound(page, server, engine, browser) {
     await pointerClick(page, '#redo');
     assert.equal(await page.evaluate('soundAudit.tones.length'), beforeDisabled, 'An already disabled button stays silent');
     await pointerClick(page, '#undo');
-    assert.equal(await textOf(page, '#moves'), '0');
+    assert.equal(await textOf(page, '#moves'), '4');
     assert.equal(await page.evaluate('soundAudit.tones.length'), beforeDisabled + 1,
       'The last Undo still clicks even though its handler disables the button');
     assert.equal(await page.evaluate('soundAudit.tones.at(-1).frequencies[0].value'), 600);
@@ -1652,7 +1669,7 @@ async function checkSound(page, server, engine, browser) {
           const beforeInvalid = await page.evaluate('soundAudit.tones.length');
           await dragPointer(page, source, position('tableau', 1, 6), { touch, hold: 150 });
           assert.equal(await page.evaluate('soundAudit.tones.length'), beforeInvalid);
-          assert.equal(await textOf(page, '#moves'), '0');
+          assert.equal(await textOf(page, '#moves'), '2');
         }
       }
     }
@@ -1672,13 +1689,20 @@ async function checkSound(page, server, engine, browser) {
       assert.equal(await page.evaluate('soundAudit.tones.length'), 0, 'Restoration stays silent');
       await pointerClick(page, state === 'won' ? '#win-new' : '#new-game');
       if (state === 'playing') {
+        assert.equal(await page.evaluate('document.querySelector("#confirm-dialog").open'), true);
         assert.equal(await page.evaluate('soundAudit.tones.filter(tone => tone.frequencies.length === 3).length'), 0);
+        // close は別タスクで届く。取消の完了前に次の新規ゲームを連打しない。
+        await page.evaluate(`void (window.soundConfirmationClosed = new Promise(resolve => {
+          document.querySelector('#confirm-dialog').addEventListener('close', resolve, { once: true });
+        }))`);
         await pointerClick(page, '#confirm-cancel');
+        await page.evaluate('soundConfirmationClosed.then(() => true)');
         assert.equal(await page.evaluate('soundAudit.tones.filter(tone => tone.frequencies.length === 3).length'), 0);
         await pointerClick(page, '#new-game');
+        assert.equal(await page.evaluate('document.querySelector("#confirm-dialog").open'), true);
         await pointerClick(page, '#confirm-accept');
       }
-      await page.waitFor('soundAudit.tones.some(tone => tone.frequencies.length === 3)', 'three-note start');
+      await page.waitFor('soundAudit.tones.some(tone => tone.frequencies.length === 3)', 'three-note start from ' + state);
       assert.equal(await page.evaluate('soundAudit.tones.filter(tone => tone.frequencies.length === 3).length'), 1);
       startTone = await page.evaluate('soundAudit.tones.find(tone => tone.frequencies.length === 3)');
       assert.deepEqual(startTone.frequencies.map(event => event.value), [523, 659, 784]);
@@ -1832,7 +1856,7 @@ async function checkGroupMove(page, server, engine) {
   assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('tableau', 1, 7))}).dataset.card`), '19');
   assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('tableau', 1, 8))}).dataset.card`), '5');
   await page.click('#undo');
-  assert.equal(await textOf(page, '#moves'), '0');
+  assert.equal(await textOf(page, '#moves'), '2');
   assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('tableau', 0, 6))}).dataset.card`), '5');
   console.log('PASS group move: two selected cards, one move and one undo');
 }
@@ -1915,6 +1939,13 @@ async function checkVictoryEffects(page, server, engine, browser) {
   const last = await page.evaluate(`document.querySelector('[data-zone="tableau"][data-card]').dataset.card`);
   await page.click(`[data-card="${last}"]`);
   await page.click(position('foundations', 3));
+  // 新しい一斉祝賀の最初の半回転を確認し、中断してから既存の独立回転を分けて検証する。
+  assert.deepEqual(await page.evaluate('winAudit.animations.map(item => item.duration)'), [250, 250, 250, 250]);
+  await page.click('#undo');
+  assert.equal(await page.evaluate('winAudit.pending.size'), 0);
+  assert.equal(await page.evaluate(`winAudit.animations.filter(item => item.animation.playState === 'running').length`), 0);
+  await page.evaluate('winAudit.timers = []; winAudit.animations = []; winAudit.maximum = 0');
+  await page.click('#redo');
   await page.waitFor('winAudit.animations.length === 4', 'four simultaneous king rotations');
   const first = await page.evaluate(`({ delays: winAudit.timers.slice(0, 4).map(item => item.delay),
     cards: winAudit.animations.map(item => Number(item.card)), durations: winAudit.animations.map(item => item.duration),
@@ -2095,11 +2126,13 @@ async function prepareUpdate(page, server, temp) {
   await page.waitFor(`navigator.serviceWorker.getRegistration().then(registration => Boolean(registration?.waiting))`, 'waiting updated service worker');
   await page.waitFor(`!document.querySelector('#apply-update').hidden`, 'update button');
   assert.equal(await page.evaluate(`document.querySelector('link[rel="stylesheet"]').href`), oldStylesheet);
-  assert.equal(await textOf(page, '#moves'), '1');
+  assert.equal(await textOf(page, '#moves'), '3');
   const waitingCaches = await page.evaluate('caches.keys()');
   assert.ok(originalCaches.every((name) => waitingCaches.includes(name)), 'Old cache must remain while the game is open');
   const updateRequests = server.requests.slice(updateStart);
-  assert.ok(updateRequests.every((request) => !/\/(?:game|storage|main|offline|drag)-|\/fonts\//.test(request.path)), 'Unchanged JS and font should be reused from the old application cache');
+  assert.equal(updateRequests.length, 3, 'A CSS-only update fetches HTML, CSS and the service worker');
+  assert.ok(updateRequests.every((request) => request.path.endsWith('/sw.js') || !/\.(js|woff2)$/.test(request.path)),
+    'The unchanged application bundle and font should be reused from the old application cache');
   console.log(`Update HTTP: ${updateRequests.length} requests, ${updateRequests.reduce((sum, request) => sum + request.bytes, 0)} body bytes`);
   console.log('PASS update waiting: unchanged JS reused; active game and old cache retained');
   return { oldStylesheet, originalCaches };
@@ -2112,7 +2145,7 @@ async function checkClickUpdate(page, browser, server, temp) {
   try {
     await other.navigate(server.url);
     await other.click('#undo');
-    assert.equal(await textOf(other, '#moves'), '0');
+    assert.equal(await textOf(other, '#moves'), '4');
     const otherOrigin = await other.evaluate('performance.timeOrigin');
     // スーパーリロード相当の制御外文書でも、待機版の適用通知とボタンを使える。
     uncontrolled = await browser.page();
@@ -2122,7 +2155,7 @@ async function checkClickUpdate(page, browser, server, temp) {
     await uncontrolled.command('Network.setBypassServiceWorker', { bypass: false });
     await uncontrolled.click('#redo');
     await uncontrolled.click('#redo');
-    assert.equal(await textOf(uncontrolled, '#moves'), '2');
+    assert.equal(await textOf(uncontrolled, '#moves'), '6');
     const uncontrolledOrigin = await uncontrolled.evaluate('performance.timeOrigin');
     await page.command('Page.bringToFront');
     const update = await prepareUpdate(page, server, temp);
@@ -2136,7 +2169,7 @@ async function checkClickUpdate(page, browser, server, temp) {
       }`);
     await page.click('#apply-update');
     assert.equal(await page.evaluate('performance.timeOrigin'), origin);
-    assert.match(await textOf(page, '#offline-status'), /保存できない/);
+    assert.match(await textOf(page, '#offline-status'), /保存できず更新を中止/);
     assert.equal(await page.evaluate(`document.querySelector('#apply-update').disabled`), false);
     assert.equal(await page.evaluate(`navigator.serviceWorker.getRegistration().then(registration => Boolean(registration.waiting))`), true);
     await page.evaluate('Storage.prototype.setItem = window.originalSetItem; delete window.originalSetItem');
@@ -2150,14 +2183,14 @@ async function checkClickUpdate(page, browser, server, temp) {
     const newOrigin = await page.evaluate('performance.timeOrigin');
     const newStylesheet = await page.evaluate(`document.querySelector('link[rel="stylesheet"]').href`);
     assert.notEqual(newStylesheet, update.oldStylesheet);
-    assert.equal(await textOf(page, '#moves'), '1');
+    assert.equal(await textOf(page, '#moves'), '3');
     assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
     assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('cells', 0))}).dataset.card`), '19');
     assert.equal(await page.evaluate(`sessionStorage.getItem(${JSON.stringify(`${storageKey}:reload`)})`), null);
     await pause(150);
     assert.equal(await page.evaluate('performance.timeOrigin'), newOrigin, 'An update click must reload only once');
     assert.equal(await other.evaluate('performance.timeOrigin'), otherOrigin, 'Updating one tab must not reload another game');
-    assert.equal(await textOf(other, '#moves'), '0');
+    assert.equal(await textOf(other, '#moves'), '4');
     assert.equal(await other.evaluate(`document.querySelector('link[rel="stylesheet"]').href`), update.oldStylesheet);
     await other.waitFor(`!document.querySelector('#apply-update').hidden`, 'other tab update button');
     assert.equal(await other.evaluate(`fetch(${JSON.stringify(update.oldStylesheet)}, { cache: 'reload' }).then(response => response.ok)`), true,
@@ -2175,14 +2208,14 @@ async function checkClickUpdate(page, browser, server, temp) {
       }`);
     await other.click('#apply-update');
     assert.equal(await other.evaluate('performance.timeOrigin'), otherOrigin);
-    assert.match(await textOf(other, '#offline-status'), /保存できない/);
+    assert.match(await textOf(other, '#offline-status'), /保存できず更新を中止/);
     assert.equal(await other.evaluate(`document.querySelector('#apply-update').disabled`), false);
     await other.evaluate('Storage.prototype.setItem = window.originalSetItem; delete window.originalSetItem');
     await other.click('#apply-update');
     await other.waitFor(`performance.timeOrigin !== ${otherOrigin} && document.readyState === 'complete'
       && document.querySelector('[data-zone="tableau"]')`, 'other tab requested reload');
     assert.equal(await other.evaluate(`document.querySelector('link[rel="stylesheet"]').href`), newStylesheet);
-    assert.equal(await textOf(other, '#moves'), '0', 'The second tab must keep its own game instead of restoring the first tab');
+    assert.equal(await textOf(other, '#moves'), '4', 'The second tab must keep its own game instead of restoring the first tab');
     assert.equal(await other.evaluate(`sessionStorage.getItem(${JSON.stringify(`${storageKey}:reload`)})`), null);
     assert.equal(await page.evaluate('performance.timeOrigin'), newOrigin);
     await uncontrolled.click('#apply-update');
@@ -2190,7 +2223,7 @@ async function checkClickUpdate(page, browser, server, temp) {
       && document.querySelector('[data-zone="tableau"]')`, 'uncontrolled tab requested reload');
     assert.equal(await uncontrolled.evaluate(`document.querySelector('link[rel="stylesheet"]').href`), newStylesheet);
     assert.equal(await uncontrolled.evaluate('Boolean(navigator.serviceWorker.controller)'), true);
-    assert.equal(await textOf(uncontrolled, '#moves'), '2');
+    assert.equal(await textOf(uncontrolled, '#moves'), '6');
   } finally {
     await other.command('Page.close');
     await uncontrolled?.command('Page.close');
@@ -2198,9 +2231,9 @@ async function checkClickUpdate(page, browser, server, temp) {
   // 共有 localStorage へ最後に保存したタブを明示し、オフライン再起動の基準をそろえる。
   await page.command('Page.bringToFront');
   await page.click('#redo');
-  assert.equal(await textOf(page, '#moves'), '2');
+  assert.equal(await textOf(page, '#moves'), '4');
   await page.click('#undo');
-  assert.equal(await textOf(page, '#moves'), '1');
+  assert.equal(await textOf(page, '#moves'), '5');
   console.log('PASS click update: saved progress and settings, one reload, independent/previously uncontrolled tabs, storage failures, offline activation and old assets');
 }
 
@@ -2223,6 +2256,8 @@ async function main() {
     await checkCardFont(page, browser, server.url, 'online');
     const firstRequests = server.requests.slice();
     if (!externalUrl) {
+      assert.equal(firstRequests.length, 5, 'HTML, the application bundle, CSS, font and service worker are each fetched once');
+      assert.ok(firstRequests.reduce((sum, request) => sum + request.bytes, 0) <= 50000, 'Initial offline assets fit the raw 50 KB limit');
       console.log(`First load HTTP: ${firstRequests.length} requests, ${firstRequests.reduce((sum, request) => sum + request.bytes, 0)} body bytes`);
       console.log(`First load paths: ${JSON.stringify(firstRequests)}`);
     } else {
@@ -2260,7 +2295,7 @@ async function main() {
     assert.equal(await textOf(page, '#moves'), '2');
     await page.click('#undo');
     await page.navigate(server.url);
-    assert.equal(await textOf(page, '#moves'), '1');
+    assert.equal(await textOf(page, '#moves'), '3');
     assert.equal(await page.evaluate(`document.querySelector(${JSON.stringify(position('cells', 0))}).dataset.card`), '19');
     assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
     await page.click('#sound-toggle');
@@ -2278,14 +2313,14 @@ async function main() {
     assert.equal(await page.evaluate(`document.documentElement.lang`), 'ja');
     assert.equal(await page.evaluate('Boolean(navigator.serviceWorker.controller)'), true);
     assert.equal(await page.evaluate(`fetch('./offline-probe', { cache: 'no-store' }).then(() => false, () => true)`), true, 'Offline probe must fail');
-    assert.equal(await textOf(page, '#moves'), '1');
+    assert.equal(await textOf(page, '#moves'), String(externalUrl ? 3 : 5));
     assert.equal(await page.evaluate(`document.querySelector('#auto-enabled').checked`), true);
     assert.equal(await textOf(page, '#sound-toggle'), ' 音声オフ', 'Muted sound survives a complete offline browser restart');
     await checkCardFont(page, browser, server.url, 'offline restart');
     await page.click('#undo');
-    assert.equal(await textOf(page, '#moves'), '0');
+    assert.equal(await textOf(page, '#moves'), String(externalUrl ? 4 : 6));
     await page.click('#redo');
-    assert.equal(await textOf(page, '#moves'), '1');
+    assert.equal(await textOf(page, '#moves'), String(externalUrl ? 5 : 7));
     await page.click('#auto-enabled');
     await page.click('#new-game');
     await page.click('#confirm-accept');
@@ -2304,4 +2339,8 @@ async function main() {
   }
 }
 
-await main();
+// 追加の成績試験から同じ実入力・保存 fixture を利用し、単独実行時だけ全試験を始める。
+export { launchBrowser, startServer, loadFixture, orderedGame, nearWinGame, position,
+  textOf, pointerClick, key, pause, waitAutomatic };
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

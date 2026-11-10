@@ -1,7 +1,7 @@
 /** フリーセルの合法手、容量境界、履歴と復元検証を公開 API から確認する。 */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { autoHome, cardLabel, createGame, getBoard, isWon, move, quickMove, rank, redo, restart, undo, validateGame } from '../src/game.js';
+import { autoHome, cardLabel, createGame, getActions, getBoard, isWon, move, quickMove, rank, redo, restart, undo, validateGame } from '../src/game.js';
 
 const from = (index, offset = 0) => ({ zone: 'tableau', index, offset });
 const to = (zone, index) => ({ zone, index });
@@ -138,7 +138,7 @@ test('簡易移動は埋もれた札・空き枠・不正な位置・満杯の�
   const full = fixture([[5]], [0, 13, 26, 39]);
   const result = quickMove(full, from(0));
   assert.equal(result.game, full);
-  assert.match(result.error, /空いているフリーセル/);
+  assert.match(result.error, /フリーセルに空きなし/);
 });
 
 test('フリーセルからの簡易移動はホームへだけ移し、送れなければそのままにする', () => {
@@ -148,7 +148,7 @@ test('フリーセルからの簡易移動はホームへだけ移し、送れ�
   assert.deepEqual(getBoard(result.game).foundations[0], [0]);
   const blocked = quickMove(result.game, to('cells', 1));
   assert.equal(blocked.game, result.game);
-  assert.match(blocked.error, /まだホームセル/);
+  assert.match(blocked.error, /この札はホームへ移動不可/);
   assert.deepEqual(getBoard(blocked.game).cells, [null, 5, null, null]);
 });
 
@@ -239,7 +239,8 @@ test('自動はフリーセルも再走査し、1 枚ずつ戻す・やり直す
   const previous = undo(result.game);
   assert.deepEqual(getBoard(previous).foundations[0], [0]);
   assert.deepEqual(getBoard(previous).cells, [1, null, null, null]);
-  assert.deepEqual(redo(previous), result.game);
+  assert.deepEqual(getBoard(redo(previous)), getBoard(result.game));
+  assert.equal(getActions(redo(previous)), 4);
   assert.deepEqual(game, original);
   assert.equal(autoHome(result.game).game, result.game);
 });
@@ -278,24 +279,33 @@ test('補助枠なしでは 1 枚だけ許可し、元列が空になる分を�
   legal(fixture([[7], [21], [9], [10], [11], [12], [22], [23]], [0, 1, 2, 3]), from(0), to('tableau', 1));
 });
 
-test('Undo/Redo は盤面・手数だけを戻し、分岐で先の履歴を破棄する', () => {
+test('Undo/Redo は盤面を戻しても累積手数を増やし、分岐で先の履歴を破棄する', () => {
   const initial = createGame(() => 0.5);
+  assert.equal(getActions(initial), 0);
   assert.equal(undo(initial), initial);
   assert.equal(redo(initial), initial);
   const first = legal(initial, from(0, 6), to('cells', 0));
   const second = { ...legal(first, from(1, 6), to('cells', 1)), elapsedMs: 9876 };
   const previous = undo(second);
+  assert.equal(getActions(first), 1);
+  assert.equal(getActions(second), 2);
+  assert.equal(getActions(previous), 3);
   assert.equal(previous.cursor, 1);
   assert.equal(previous.elapsedMs, 9876);
   assert.deepEqual(getBoard(previous), getBoard(first));
   assert.deepEqual(getBoard(redo(previous)), getBoard(second));
+  assert.equal(getActions(redo(previous)), 4);
   assert.equal(undo(previous).started, true);
   assert.equal(validateGame(clone(undo(previous))), true);
   const branch = legal(previous, from(2, 6), to('cells', 2));
+  assert.equal(getActions(branch), 4);
   assert.equal(branch.history.length, 3);
   assert.equal(redo(branch), branch);
   assert.equal(validateGame(clone(branch)), true);
-  assert.deepEqual(restart(branch), initial);
+  const fresh = restart({ ...branch, recorded: true });
+  assert.notEqual(fresh.id, initial.id);
+  assert.deepEqual({ ...fresh, id: initial.id }, initial);
+  assert.equal(validateGame(fresh), true);
 });
 
 test('最後の 1 枚で勝利し、戻すと解除・やり直すと再び勝利する', () => {
@@ -335,6 +345,7 @@ test('全 52 枚の自動移動は通常の保存形式のまま勝利・Undo・
   const result = autoHome(game);
   assert.equal(result.count, 52);
   assert.equal(result.game.cursor, 52);
+  assert.equal(getActions(result.game), 52);
   assert.equal(result.game.history.length, 53);
   assert.equal(isWon(getBoard(result.game)), true);
   assert.equal(isWon(getBoard(undo(result.game))), false);
@@ -343,6 +354,93 @@ test('全 52 枚の自動移動は通常の保存形式のまま勝利・Undo・
     assert.equal(validateGame(clone(state)), true);
   }
   assert.deepEqual(game, original);
+});
+
+test('成功した操作だけ数え、複数枚移動は一手、保存した成績の登録状態は戻さない', () => {
+  let game = { ...fixture([[19, 5], [7]]), recorded: true };
+  game = legal(game, from(0), to('tableau', 1));
+  assert.equal(getActions(game), 1);
+  const invalid = move(game, from(1, 2), to('cells', 9));
+  assert.equal(invalid.game, game);
+  assert.equal(getActions(invalid.game), 1);
+  const previous = undo(game);
+  assert.equal(getActions(previous), 2);
+  assert.equal(undo(previous), previous);
+  assert.equal(previous.recorded, true);
+  const next = redo(previous);
+  assert.equal(getActions(next), 3);
+  assert.equal(redo(next), next);
+  assert.equal(next.recorded, true);
+});
+
+test('旧保存は履歴長を手数の下限とし、Undo 済みでも継続・保存できる', () => {
+  let legacy = createGame(() => 0.5);
+  legacy = legal(legacy, from(0, 6), to('cells', 0));
+  legacy = undo(legal(legacy, from(1, 6), to('cells', 1)));
+  delete legacy.id;
+  delete legacy.actions;
+  assert.equal(legacy.cursor, 1);
+  assert.equal(getActions(legacy), 2);
+  assert.equal(validateGame(legacy), true);
+  for (const next of [undo(legacy), redo(legacy), legal(legacy, from(2, 6), to('cells', 2))]) {
+    assert.equal(getActions(next), 3);
+    assert.equal(next.id, undefined, '旧局の過去の取り消し回数は推測せずランキング対象外を保つ');
+    assert.equal(validateGame(next), true);
+  }
+  assert.equal(getActions(restart(legacy)), 0);
+  assert.equal(typeof restart(legacy).id, 'string');
+});
+
+test('成績の識別子・累積手数・登録状態は復元時に型と範囲を検証する', () => {
+  const initial = createGame(() => 0.5);
+  const game = legal(initial, from(0, 6), to('cells', 0));
+  assert.equal(validateGame({ ...game, recorded: true }), true);
+  for (const actions of [-1, 0, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, '1', null, undefined]) {
+    assert.equal(validateGame({ ...game, actions }), false, String(actions));
+  }
+  assert.equal(validateGame({ ...initial, actions: 1 }), false);
+  for (const id of ['', 'not-an-id', null, 1, [game.id], {}]) {
+    assert.equal(validateGame({ ...game, id }), false);
+  }
+  for (const recorded of [null, 1, 'true', {}]) {
+    assert.equal(validateGame({ ...game, recorded }), false);
+  }
+  const old = { ...game };
+  delete old.id;
+  delete old.actions;
+  assert.equal(validateGame(old), true);
+});
+
+test('初回クリアの成績は復元と Undo／Redo で保ち、新規・リセットでは引き継がない', () => {
+  const initial = createGame(() => 0.5);
+  const deck = Array.from({ length: 52 }, (_, index) => (index % 4) * 13 + 12 - Math.floor(index / 4));
+  initial.history[0].tableau = Array.from({ length: 8 }, (_, column) => deck.filter((_, index) => index % 8 === column));
+  const won = autoHome(initial).game;
+  const result = { id: won.id, date: '2026-11-10T12:00:00.000Z', time: 90, moves: 52 };
+  // ランキング保存が失敗しても、この結果を対局と一緒に保存して翌日再試行できる。
+  const pending = { ...won, elapsedMs: 90_000, result };
+  const restored = clone(pending);
+  assert.equal(validateGame(restored), true);
+  assert.deepEqual(restored.result, result);
+  const previous = undo(restored);
+  const next = redo(previous);
+  for (const game of [previous, next]) {
+    assert.equal(validateGame(game), true);
+    assert.deepEqual(game.result, result, '再勝利しても最初の達成日時・時間・手数を変えない');
+  }
+  assert.equal(getActions(next), 54);
+  for (const game of [restart({ ...next, recorded: true }), createGame(() => 0.5)]) {
+    assert.notEqual(game.id, won.id);
+    assert.equal(game.actions, 0);
+    assert.equal(game.result, undefined);
+    assert.equal(game.recorded, undefined);
+    assert.equal(validateGame(game), true);
+  }
+  const anotherID = createGame().id;
+  for (const invalid of [null, {}, { ...result, id: anotherID }, { ...result, date: 'invalid' },
+    { ...result, time: -1 }, { ...result, moves: 1.5 }]) {
+    assert.equal(validateGame({ ...pending, result: invalid }), false);
+  }
 });
 
 test('自動移動を 1 枚ずつ確定しても一括と同じ履歴になり、未実行の手や元の状態を変えない', () => {

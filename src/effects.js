@@ -77,17 +77,20 @@ export function setupEffects(board, button, key) {
     for (const item of winners) {
       clearTimeout(item.timer);
       item.animation?.cancel();
+      // Q・J は表示上の演出だけ。中断時は保存状態にかかわらず元の K へ戻す。
+      item.face.textContent = item.king;
     }
     winners = [];
   }
 
-  /** 4 枚それぞれが独立して回転を繰り返す。同期する全体タイマーは持たない。 */
-  function win(value) {
+  /** 祝賀指定時だけ 4 枚同時に絵札を巡り、その後は各スート独立の回転を繰り返す。 */
+  function win(value, celebrate = false) {
     won = value;
     stopWin();
     if (!won || document.hidden || motion.matches) return;
     for (const card of board.querySelectorAll('.foundations .card')) {
-      const item = {};
+      const face = card.firstElementChild;
+      const item = { face, king: face.textContent };
       winners.push(item);
       /** 開始間隔は 1〜15 秒。最短間隔が最長回転より長く、同じ札の演出は重ならない。 */
       function schedule() {
@@ -99,7 +102,28 @@ export function setupEffects(board, button, key) {
           schedule();
         }, 1000 + Math.random() * 14000);
       }
-      schedule();
+
+      /** 縁が正面を向く半回転の境界で字形だけを替え、数字や履歴には触れない。 */
+      async function salute() {
+        // Unicode の Knight を飛ばすため、K→Q は -1、K→J は -3 のコードポイント差。
+        for (const [offset, duration] of [[-1, 500], [-3, 200], [0, 200]]) {
+          for (const angle of [90, 0]) {
+            item.animation = card.animate([
+              { transform: `rotateY(${angle ? 0 : -90}deg)` },
+              { transform: `rotateY(${angle}deg)` },
+            ], { duration: duration / 2, easing: 'ease-in-out' });
+            await item.animation.finished.catch(() => {});
+            // Undo・非表示・動きを減らす設定で中断した非同期処理は再開させない。
+            if (!winners.includes(item)) return;
+            face.textContent = String.fromCodePoint(item.king.codePointAt(0) + offset);
+          }
+          if (offset) await new Promise(resolve => { item.timer = setTimeout(resolve, 100); });
+          if (!winners.includes(item)) return;
+        }
+        schedule();
+      }
+      if (celebrate) salute();
+      else schedule();
     }
   }
 
@@ -133,6 +157,7 @@ export function setupEffects(board, button, key) {
       play(completed ? 'win' : zone);
     },
     start: () => play('start'),
+    celebrate: () => win(won, true),
     win,
   };
 }

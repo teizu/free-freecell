@@ -7,10 +7,10 @@ export function loadGame(key, storageFactory = () => globalThis.localStorage) {
     const saved = storageFactory().getItem(key);
     if (saved === null) return { game: null, error: null };
     const game = JSON.parse(saved);
-    if (!validateGame(game)) return { game: null, error: '保存データを復元できないため、新しいゲームを始めました。' };
+    if (!validateGame(game)) return { game: null, error: '保存データを復元できず、新規ゲームを開始。' };
     return { game, error: null };
   } catch {
-    return { game: null, error: '保存データを読み込めませんでした。この画面でゲームを続けられます。' };
+    return { game: null, error: '保存データの読込に失敗。この画面では遊べます。' };
   }
 }
 
@@ -20,7 +20,7 @@ export function saveGame(key, game, storageFactory = () => globalThis.localStora
     storageFactory().setItem(key, JSON.stringify(game));
     return null;
   } catch {
-    return '保存できません。この画面では遊べますが、閉じると今回の進行を失う場合があります。';
+    return '保存不可。この画面では遊べますが、閉じると進行を失う場合があります。';
   }
 }
 

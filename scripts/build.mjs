@@ -4,11 +4,11 @@ import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { transformSync } from 'esbuild';
+import { build as bundle, transformSync } from 'esbuild';
 import { minify } from 'html-minifier-terser';
 import { checkSize } from './size.mjs';
 
-const digest = (content) => createHash('sha256').update(content).digest('hex');
+const digest = (content, encoding = 'hex') => createHash('sha256').update(content).digest(encoding);
 
 /** 構文・空白と JS の内部識別子を縮め、公開名と日本語・文字列の意味を維持する。 */
 function compact(content, extension, format) {
@@ -31,6 +31,9 @@ function compactHTML(content) {
     collapseWhitespace: true,
     conservativeCollapse: true,
     removeComments: true,
+    // 空白などを含まない属性だけ引用符を省き、日本語の文言とタグ構造は保つ。
+    removeAttributeQuotes: true,
+    collapseBooleanAttributes: true,
     // 固定版の空白判定を拡張し、script/style の先頭・末尾の改行も残す。
     canTrimWhitespace: (tag) => !['pre', 'textarea', 'script', 'style'].includes(tag),
   });
@@ -60,7 +63,7 @@ async function updateDate(source, files) {
   return date.toISOString().slice(0, 10);
 }
 
-/** 静的な相対参照だけを扱い、循環依存や解決不能な参照は明示的に拒否する。 */
+/** HTML の JS 入口ごとに依存をまとめ、CSS・フォントは独立した更新単位に保つ。 */
 export async function build(source, destination) {
   source = resolve(source);
   destination = resolve(destination);
@@ -81,6 +84,34 @@ export async function build(source, destination) {
       else if (entry.isFile()) inputs.set(path, await readFile(resolve(source, path)));
       else throw new Error(`ソースに通常ファイル以外があります: ${path}`);
     }
+  }
+
+  /** 配布用の置換を最適化より先に行い、オフライン処理を誤って未使用扱いにしない。 */
+  function published(content) {
+    return content.toString('utf8').replaceAll('__FREECELL_BUILD__', 'published').replaceAll('__FREECELL_DATE__', date);
+  }
+
+  /** 各 script の依存をメモリー上のソースから解決し、外部取得や範囲外の読込を拒否する。 */
+  async function bundleScript(entry) {
+    const result = await bundle({
+      entryPoints: [entry], bundle: true, write: false, format: 'esm',
+      minify: true, charset: 'utf8', legalComments: 'none', logLevel: 'silent',
+      plugins: [{
+        name: 'local-source',
+        /** ファイル名を入力一覧のキーに限定し、Node の探索やネットワークへ渡さない。 */
+        setup(builder) {
+          builder.onResolve({ filter: /.*/ }, ({ path, importer, kind }) => {
+            const file = kind === 'entry-point' ? path : posix.normalize(posix.join(posix.dirname(importer), path));
+            if ((kind !== 'entry-point' && !path.startsWith('.')) || !inputs.has(file) || extname(file) !== '.js' || file === 'sw.js') {
+              throw new Error(`参照先がありません: ${importer || entry} → ${path}`);
+            }
+            return { path: file, namespace: 'local-source' };
+          });
+          builder.onLoad({ filter: /.*/, namespace: 'local-source' }, ({ path }) => ({ contents: published(inputs.get(path)), loader: 'js' }));
+        },
+      }],
+    });
+    return Buffer.from(result.outputFiles[0].contents);
   }
 
   /** 引用符付きの相対ファイル参照を、変換後のファイル名へ置き換える。 */
@@ -104,8 +135,7 @@ export async function build(source, destination) {
     const extension = extname(file);
     let content = inputs.get(file);
     if (['.js', '.css', '.html'].includes(extension)) {
-      const rewritten = rewriteReferences(content.toString('utf8')
-        .replaceAll('__FREECELL_BUILD__', 'published').replaceAll('__FREECELL_DATE__', date), file);
+      const rewritten = rewriteReferences(published(content), file);
       content = Buffer.from(compact(rewritten, extension));
     }
     const hashed = ['.js', '.css', '.woff2', '.txt'].includes(extension);
@@ -118,13 +148,26 @@ export async function build(source, destination) {
 
   await collect();
   if (!inputs.has('index.html') || !inputs.has('sw.js')) throw new Error('index.html と sw.js が必要です。');
-  // 非同期の HTML 変換を先に済ませ、依存ファイル名の解決は単純な同期処理に保つ。
-  for (const [file, content] of inputs) {
-    if (extname(file) === '.html') inputs.set(file, Buffer.from(await compactHTML(content.toString('utf8'))));
-  }
   const date = await updateDate(source, inputs.keys());
-  for (const file of inputs.keys()) if (file !== 'sw.js') compile(file);
-  const assets = [...outputs].sort(([left], [right]) => left.localeCompare(right)).map(([name, content]) => [name, digest(content)]);
+  // 開発用モジュールをすべて配布せず、HTML から参照される JS だけを入口にする。
+  // 先に全入口を解決し終えるので、入口どうしで import しても元ソースから組み立てる。
+  const scripts = new Set();
+  for (const [file, content] of inputs) {
+    if (extname(file) !== '.html') continue;
+    for (const [, reference] of content.toString('utf8').matchAll(/['"](\.\.?\/[^'"\s]+\.js)['"]/g)) {
+      const target = posix.normalize(posix.join(posix.dirname(file), reference));
+      if (target !== 'sw.js') scripts.add(target);
+    }
+  }
+  const bundled = await Promise.all([...scripts].map(async file => [file, await bundleScript(file)]));
+  for (const [file, content] of bundled) inputs.set(file, content);
+  for (const file of inputs.keys()) if (extname(file) !== '.js' || scripts.has(file)) compile(file);
+  // 参照をハッシュ付き URL に置換してから属性の引用符を省き、最後に HTML の内容を確定する。
+  for (const [file, content] of outputs) {
+    if (extname(file) === '.html') outputs.set(file, Buffer.from(await compactHTML(content.toString('utf8'))));
+  }
+  // 整合性検証は SHA-256 の全ビットを保ち、マニフェスト内の表現だけ Base64 に縮める。
+  const assets = [...outputs].sort(([left], [right]) => left.localeCompare(right)).map(([name, content]) => [name, digest(content, 'base64')]);
   const template = inputs.get('sw.js').toString('utf8');
   if (!template.includes('__FREECELL_VERSION__') || !template.includes('/*__FREECELL_ASSETS__*/ []')) {
     throw new Error('Service Worker のビルド用プレースホルダーがありません。');

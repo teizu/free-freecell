@@ -24,8 +24,8 @@ HTML・CSS・JavaScript（ES Modules）で作る、ブラウザー内で完結�
 `docs/` は開発文書用であり、Pages の公開元には使用しません。
 
 フレームワークは使いません。Node.js 24 のビルド処理で、内容ハッシュ付きのファイル名と Service Worker の保存対象を生成します。
-容量上限を守るため、開発依存の esbuild 0.28.2 で公開用 JS・CSS の空白・コメント・構文を縮めます。`minifyWhitespace` と `minifySyntax` を有効にし、JS だけは `minifyIdentifiers` で内部名も短縮します。export 名とプロパティ名は維持します。`charset: 'utf8'` を指定し、日本語を UTF-8 のまま出力します。
-HTML は開発依存の [html-minifier-terser 7.2.0](https://raw.githubusercontent.com/terser/html-minifier-terser/v7.2.0/README.md) で解析してコメント・インデントを削減し、参照 URL と更新日のプレースホルダーを書き換えます。`collapseWhitespace`・`conservativeCollapse`・`removeComments` だけを有効にし、語間の空白は 1 つ残します。`canTrimWhitespace` の判定で `pre`・`textarea`・`script`・`style` の内容と前後の改行を保護し、属性引用符や閉じタグは省きません。HTML 内の JS・CSS は追加で最小化しません。元の `src/` のコメントと整形は維持します。
+容量上限を守るため、開発依存の esbuild 0.28.2 で公開用 JS・CSS の空白・コメント・構文を縮めます。`minifyWhitespace` と `minifySyntax` を有効にし、JS だけは `minifyIdentifiers` で内部名も短縮します。公開時はHTMLから参照する入口ごとにES Modulesをまとめ、アプリのJSは1ファイルにします。ソースのモジュール分割は維持します。公開用の文字列置換はbundle前に行い、Service Worker登録を誤って未使用扱いにしません。外部・配布範囲外のimportは拒否し、ESMの循環importは一度だけ実行します。export 名とプロパティ名は維持します。`charset: 'utf8'` を指定し、日本語を UTF-8 のまま出力します。
+HTML は開発依存の [html-minifier-terser 7.2.0](https://raw.githubusercontent.com/terser/html-minifier-terser/v7.2.0/README.md) で解析してコメント・インデントを削減し、参照 URL と更新日のプレースホルダーを書き換えます。`collapseWhitespace`・`conservativeCollapse`・`removeComments`・`removeAttributeQuotes`・`collapseBooleanAttributes` を有効にし、語間の空白は 1 つ残します。`canTrimWhitespace` の判定で `pre`・`textarea`・`script`・`style` の内容と前後の改行を保護し、安全な属性だけ引用符を省き、閉じタグは保ちます。HTML 内の JS・CSS は追加で最小化しません。元の `src/` のコメントと整形は維持します。
 両ツールの版を `package.json` に固定し、`package-lock.json` を管理します。初回や依存の変更後は `npm ci` で準備し、取得済みの依存があれば以降のビルドに通信は不要です。
 実行時に外部のライブラリ・API・画像・Web フォントを取得せず、Wasm や大きなゲームエンジンは採用しません。
 クライアントのルーティングも導入せず、1 ページで完結させます。
@@ -41,6 +41,7 @@ HTML は開発依存の [html-minifier-terser 7.2.0](https://raw.githubuserconte
 | `src/styles.css` | カードの外観、選択・フォーカス表示、レスポンシブ配置 |
 | `src/fonts/` | 著作権・ライセンス情報を保持した Noto Sans Symbols 2 のトランプ文字・スート用 WOFF2 |
 | `src/game.js` | カード、配札、合法手判定、ホーム優先の移動、安全な自動移動、状態遷移、履歴、勝利判定。DOM や保存処理に依存しない |
+| `src/records.js` | 成績の検証、最短時間・最小手数の独立した上位3件、日付と試行IDによる重複防止 |
 | `src/storage.js` | JSON の読み書き、保存形式のバージョン確認と復元検証 |
 | `src/offline.js` | Service Worker の登録と、準備・更新状況の通知 |
 | `src/sw.js` | 公開ファイルのキャッシュ、オフライン起動、版の切り替え。ゲームの保存とは分離する |
@@ -81,7 +82,15 @@ Ctrl／Meta-Z と Ctrl／Meta-Y はボタンと同じ履歴操作へ渡します
 画面では `autoHome(game, 1)` で 1 枚だけ確定・描画・保存し、Web Animations API で元の位置からホームまで 100ms で動かしてから次へ進みます。入力・非表示・画面サイズ変更で演出と後続を中止し、確定済みの手を保ちます。実行番号を照合して古い非同期処理の再開を防ぎます。`prefers-reduced-motion: reduce` では全対象を即時処理します。
 チェックがオンでも `game.started` が真になるまで自動移動しません。最初の成功した移動以降、成功した移動の後と、開始済みの局でチェックをオンにしたときに実行します。新規・リセット・未開始局の復元・未開始中のチェック変更は、盤面・手数 0・時間 0:00 を保ちます。明示的な「自動」ボタンでは開始前も実行でき、札を送れた時点で通常どおり開始します。Undo／Redo や保存局の復元直後は自動移動しません。
 
+## 累積手数と成績
+
+履歴の `cursor` と累積手数 `actions` を分離します。成功した移動・Undo・Redoで加算し、履歴分岐でも減らしません。新規・リセットで `crypto.randomUUID()` の試行 `id` と `actions: 0` を生成します。初回完了時は時計を確定し `{id, date, time, moves}` を `game.result` に保持してから成績を保存します。保存失敗後の翌日の再試行やUndo／Redoでも、この最初の結果を使います。成功すると `recorded: true` を進行にも保存します。これはUndo／Redoでも維持します。保存済みランキングでもIDで重複を除き、進行保存と成績保存の間の再起動に対応します。
+
+成績は `:records` キーに `[時間順位, 手数順位]` の2配列（各最大3件）で保存します。各項目は `{id, date, time, moves}` です。比較は値の昇順、同値はISO日時の昇順です。登録・表示の直前に保存を読み直します。モーダル内の値は `textContent` で表示し、不正なJSON・数値・日時やStorage拒否を案内へ変換します。旧局はIDなしでも復元でき、`actions` がなければ保持する履歴の最大位置を下限にします。過去のUndo回数は推測せず、成績には登録しません。
+
 ## クリア演出と音声
+
+新たな勝利の `finishMove` 終了時だけ `effects.celebrate()` を呼びます。各札の2つの半回転を同期して始め、K→Q（500ms）、100ms静止、Q→J（200ms）、100ms静止、J→K（200ms）を実行します。補助面文字はコードポイントで扱い、QとJの間のKnightを飛ばします。`stopWin` は待機・回転を中断して元のKに戻し、古い非同期処理も再開させません。
 
 `effects.js` はゲーム状態と履歴を変更しません。クリア中のホーム 4 枚に、それぞれ独立したタイマーと Web Animations API の `rotateY(0deg)` → `rotateY(360deg)` を設定します。回転時間は毎回 100〜500ms、最初の待機と回転開始どうしの間隔は毎回 1〜15 秒から選び、別々の札の並行した回転を許容します。最短間隔が最長回転より長いため、同じ札の回転は重なりません。再描画・Undo・画面非表示では古いタイマーと回転を取り消し、`prefers-reduced-motion: reduce` では開始しません。
 
@@ -135,6 +144,8 @@ CSS、JavaScript、将来の画像、ページ内リンクは `./` などの相�
 不正な内容を一部だけ読み込まず、復元を見送って新しいゲームを開始し、理由を通知します。
 複数タブの同期、統計、クラウド保存は初回の対象外です。
 
+Service Worker の整合検証には SHA-256 の全256ビットを使い、マニフェスト内では Base64 表記にして容量を削減します。ファイル名の12桁の内容ハッシュとは別の検証値です。
+
 ## オフラインと更新
 
 配札・カード操作・履歴・ゲーム保存・時間表示はネットワークに依存させません。
@@ -148,7 +159,7 @@ Service Worker とキャッシュの対象はこのアプリの配置パス内�
 通信は初回取得と更新確認・必要な更新ファイルの取得に限定します。
 アプリ独自の定期ポーリングや操作ごとの更新確認は行いません。
 起動に伴うブラウザー標準の Service Worker 更新確認を基本とし、確認に失敗してもゲームを開始・継続できます。
-JS・CSS は内容が変わった場合だけ URL を変更し、同じ内容をキャッシュから再利用できるようにします。
+JSはbundle全体が更新単位となるため、従来のモジュール別配信よりJS更新時の通信は増えます。CSS・フォントは引き続き独立して再利用します。JS・CSS は内容が変わった場合だけ URL を変更し、同じ内容をキャッシュから再利用できるようにします。
 同梱フォントも内容ハッシュ付き URL にし、未変更なら旧版のキャッシュから再利用します。WOFF2 は著作権・ライセンス情報を含むバイナリのままコピーします。ライセンス全文は外部の公式文書へリンクし、自動取得もオフライン保存もしません。OFL 原本は `docs/licenses/` に開発資料として保持します。条件の根拠は [フォント管理](fonts.md) を参照してください。
 初回表示とキャッシュ準備で同じファイルを二重に取得していないかも実測します。
 

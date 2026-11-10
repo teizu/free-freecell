@@ -10,7 +10,7 @@ import { build } from '../scripts/build.mjs';
 import { checkSize, measureSize } from '../scripts/size.mjs';
 
 const swTemplate = await readFile(new URL('../src/sw.js', import.meta.url), 'utf8');
-const hash = (content) => createHash('sha256').update(content).digest('hex');
+const hash = (content, encoding = 'hex') => createHash('sha256').update(content).digest(encoding);
 
 /** 一時作業場所を作り、成功・失敗のどちらでも後片付けを登録する。 */
 async function workspace(t) {
@@ -69,8 +69,10 @@ test('build hashes imported dependencies, preserves relative URLs and keeps unch
   const html = await readFile(join(output, 'index.html'), 'utf8');
   const firstMain = first.files.find((name) => name.startsWith('main-'));
   const firstCSS = first.files.find((name) => name.startsWith('styles-'));
-  assert.match(html, /src="\.\/main-[a-f0-9]{12}\.js"/);
-  assert.match(await readFile(join(output, firstMain), 'utf8'), /\.\/lib\/value-[a-f0-9]{12}\.js/);
+  assert.match(html, /src=\.\/main-[a-f0-9]{12}\.js/);
+  assert.match(await readFile(join(output, firstMain), 'utf8'), /日本語/);
+  assert.equal(first.files.filter(name => name.endsWith('.js') && name !== 'sw.js').length, 1,
+    'Imported modules are included in the entry instead of fetched as separate assets');
   assert.doesNotMatch(await readFile(join(output, 'sw.js'), 'utf8'), /__FREECELL_/);
   assert.equal(first.size, await measureSize(output));
   const repeat = await build(source, output);
@@ -82,6 +84,50 @@ test('build hashes imported dependencies, preserves relative URLs and keeps unch
   assert.notEqual(second.files.find((name) => name.startsWith('main-')), firstMain);
   assert.equal(second.files.find((name) => name.startsWith('styles-')), firstCSS);
   assert.ok(!(await readdir(output)).includes(firstMain), 'old generated files are removed');
+});
+
+test('各 HTML の script を入口にまとめ、公開用置換と外部依存の拒否を最適化より先に行う', async (t) => {
+  const { source, output } = await fixture(t);
+  await mkdir(join(source, 'screens'));
+  await writeFile(join(source, 'index.html'), '<script type="module" src="./screens/play.js"></script><script type="module" src="./watch.js"></script>');
+  const original = 'export const value = "__FREECELL_BUILD__" === "published" ? "公開でオフライン準備" : "ソースは登録しない";';
+  await writeFile(join(source, 'lib/value.js'), original);
+  await writeFile(join(source, 'screens/play.js'), 'export { value } from "../lib/value.js";');
+  await writeFile(join(source, 'watch.js'), 'export { value } from "./lib/value.js";');
+  await writeFile(join(source, 'unused.js'), '未使用の開発モジュールは構文検査や配布の対象にしない');
+  const result = await build(source, output);
+  const scripts = result.files.filter(name => name.endsWith('.js') && name !== 'sw.js');
+  assert.equal(scripts.length, 2);
+  assert.ok(scripts.some(name => name.startsWith('screens/play-')));
+  for (const file of scripts) {
+    const generated = await readFile(join(output, file));
+    const module = await import(`data:text/javascript;base64,${generated.toString('base64')}`);
+    assert.equal(module.value, '公開でオフライン準備');
+  }
+  assert.equal(await readFile(join(source, 'lib/value.js'), 'utf8'), original, '開発用ソースの公開判定を書き換えない');
+  const previous = await readFile(join(output, 'sw.js'));
+  await writeFile(join(source, 'lib/value.js'), 'export { value } from "https://example.test/library.js";');
+  await assert.rejects(build(source, output), /参照先がありません/);
+  assert.deepEqual(await readFile(join(output, 'sw.js')), previous);
+});
+
+test('bundle 後も SW のサブパスと JSON の保存キーを保つ', async (t) => {
+  const { source, output } = await fixture(t);
+  await writeFile(join(source, 'offline.js'), `export function workerURL() {
+    return '__FREECELL_BUILD__' === 'published' ? new URL('./sw.js', import.meta.url).href : null;
+  }`);
+  const saved = { version: 1, history: [{ tableau: [1], cells: [], foundations: [] }], cursor: 0, elapsedMs: 1250, started: true };
+  await writeFile(join(source, 'main.js'), `import { workerURL } from './offline.js';
+    export const worker = workerURL(); export const saved = JSON.stringify(${JSON.stringify(saved)});`);
+  const result = await build(source, output);
+  const file = result.files.find(name => name.startsWith('main-'));
+  const bundled = await readFile(join(output, file), 'utf8');
+  assert.match(bundled, /import\.meta\.url/);
+  // 実ブラウザーの module URL を模し、data URL 上でも基準 URL の保持を確認する。
+  const executable = bundled.replaceAll('import.meta.url', JSON.stringify(`https://example.test/free-freecell/${file}`));
+  const module = await import(`data:text/javascript;base64,${Buffer.from(executable).toString('base64')}`);
+  assert.equal(module.worker, 'https://example.test/free-freecell/sw.js');
+  assert.deepEqual(JSON.parse(module.saved), saved, '識別子短縮は永続化されるプロパティ名を変えない');
 });
 
 test('更新日は指定した UNIX 秒を日本時間で表示し、同じ入力の再ビルドでは変わらない', async (t) => {
@@ -133,9 +179,9 @@ test('フォントのバイナリと外部ライセンスリンクを保ち、�
   const firstMain = first.files.find(name => name.startsWith('main-'));
   assert.deepEqual(await readFile(join(output, fontName)), font);
   assert.ok((await readFile(join(output, firstCSS), 'utf8')).includes(`./${fontName}`));
-  assert.ok((await readFile(join(output, 'index.html'), 'utf8')).includes(`href="${licenseURL}"`));
+  assert.ok((await readFile(join(output, 'index.html'), 'utf8')).includes(`href=${licenseURL}`));
   const worker = await readFile(join(output, 'sw.js'), 'utf8');
-  assert.ok(worker.includes(fontName) && worker.includes(hash(font)));
+  assert.ok(worker.includes(fontName) && worker.includes(hash(font, 'base64')));
   assert.ok(!worker.includes(licenseURL), 'External license pages must not be fetched or cached by the application');
   assert.equal(first.size, await measureSize(output));
 
@@ -151,7 +197,7 @@ test('フォントのバイナリと外部ライセンスリンクを保ち、�
   assert.ok((await readFile(join(output, secondCSS), 'utf8')).includes(`./${secondFont}`));
   assert.ok((await readFile(join(output, 'index.html'), 'utf8')).includes(`./${secondCSS}`));
   assert.equal(second.files.find(name => name.startsWith('main-')), firstMain);
-  assert.ok((await readFile(join(output, 'index.html'), 'utf8')).includes(`href="${licenseURL}"`));
+  assert.ok((await readFile(join(output, 'index.html'), 'utf8')).includes(`href=${licenseURL}`));
   assert.ok(!(await readdir(join(output, 'fonts'))).includes(fontName.split('/').at(-1)));
 });
 
@@ -176,9 +222,10 @@ test('build compacts generated code while preserving Japanese, literals and newl
     '}',
   ].join('\n');
   await writeFile(join(source, 'lib/value.js'), original);
+  await writeFile(join(source, 'main.js'), 'export * from \"./lib/value.js\";');
   await writeFile(join(source, 'styles.css'), '/* 配布前の説明 */ body::before { content: "日本語  /* 文字 */"; width: calc(100% - 2rem); }');
   const result = await build(source, output);
-  const generatedName = result.files.find(name => name.startsWith('lib/value-'));
+  const generatedName = result.files.find(name => name.startsWith('main-'));
   const generated = await readFile(join(output, generatedName), 'utf8');
   const module = await import(`data:text/javascript;base64,${Buffer.from(generated).toString('base64')}`);
   const sourceModule = await import(`data:text/javascript;base64,${Buffer.from(original).toString('base64')}`);
@@ -235,12 +282,12 @@ test('HTML 圧縮は日本語・語間・属性と pre/textarea/script/style の
   const result = await build(source, output);
   const generated = await readFile(join(output, 'index.html'), 'utf8');
   for (const element of preserved) assert.ok(generated.includes(element), element);
-  assert.match(generated, /<button id="action" disabled(?:="disabled")? aria-label="日本語 の操作"> 操作 <\/button>/);
-  assert.match(generated, /src="\.\/main-[a-f0-9]{12}\.js"/);
+  assert.match(generated, /<button id=action disabled(?:=disabled)? aria-label="日本語 の操作"> 操作 <\/button>/);
+  assert.match(generated, /src=\.\/main-[a-f0-9]{12}\.js/);
   assert.doesNotMatch(generated, /開発用の説明コメント/);
   assert.ok(Buffer.byteLength(generated) < Buffer.byteLength(original));
   assert.equal(await readFile(join(source, 'index.html'), 'utf8'), original, '開発用 HTML は書き換えない');
-  assert.ok((await readFile(join(output, 'sw.js'), 'utf8')).includes(hash(generated)), '圧縮後の HTML をキャッシュの版へ反映する');
+  assert.ok((await readFile(join(output, 'sw.js'), 'utf8')).includes(hash(generated, 'base64')), '圧縮後の HTML をキャッシュの版へ反映する');
   assert.deepEqual(await build(source, output), result, '同じ HTML の再ビルド結果は変えない');
 });
 
@@ -254,10 +301,15 @@ test('HTML の解析に失敗した場合も、直前の配布物を保持する
   assert.equal(await measureSize(output), result.size);
 });
 
-test('build rejects circular dependencies, missing references and oversized output', async (t) => {
+test('build bundles circular ESM once and rejects missing references and oversized output', async (t) => {
   const { source, output } = await fixture(t);
-  await writeFile(join(source, 'lib/value.js'), 'import "../main.js";');
-  await assert.rejects(build(source, output), /循環/);
+  await writeFile(join(source, 'main.js'), 'import { value } from "./lib/value.js"; globalThis.visits = (globalThis.visits || 0) + 1; globalThis.result = value;');
+  await writeFile(join(source, 'lib/value.js'), 'import "../main.js"; export const value = "循環";');
+  const cycle = await build(source, output);
+  const context = vm.createContext({});
+  vm.runInContext(await readFile(join(output, cycle.files.find(name => name.startsWith('main-'))), 'utf8'), context);
+  assert.equal(context.visits, 1);
+  assert.equal(context.result, '循環');
   await writeFile(join(source, 'lib/value.js'), 'import "./missing.js";');
   await assert.rejects(build(source, output), /参照先がありません/);
   await writeFile(join(source, 'lib/value.js'), 'export const value = 1;');
@@ -268,7 +320,7 @@ test('build rejects circular dependencies, missing references and oversized outp
 
 /** ソースの SW へ版と資産を埋め込み、未ビルドの境界条件を独立して検証する。 */
 function workerHarness(version, files, shared = new Map(), server = new Map(Object.entries(files)), httpCache = new Map()) {
-  const manifest = Object.entries(files).map(([name, body]) => [name, hash(body)]);
+  const manifest = Object.entries(files).map(([name, body]) => [name, hash(body, 'base64')]);
   const script = swTemplate.replace('__FREECELL_VERSION__', version)
     .replace('/*__FREECELL_ASSETS__*/ []', JSON.stringify(manifest));
   return runWorker(script, files, shared, server, httpCache);
@@ -294,7 +346,7 @@ function runWorker(script, files, shared = new Map(), server = new Map(Object.en
     },
   };
   const context = vm.createContext({
-    URL, Request, Response, Uint8Array, crypto: webcrypto, caches,
+    URL, Request, Response, Uint8Array, btoa, crypto: webcrypto, caches,
     self: {
       location: { href: `${base}sw.js` }, addEventListener: (name, handler) => listeners.set(name, handler),
       clients: { matchAll: async () => clients }, skipWaiting: async () => { skipped += 1; },

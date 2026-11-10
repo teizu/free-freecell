@@ -1,20 +1,20 @@
 /** オフライン準備とクリック更新を扱う。進行の保存は画面側のコールバックへ任せる。 */
 const PUBLISHED = '__FREECELL_BUILD__' === 'published';
 // 同じ失敗理由は共有し、どの更新経路でも同じ案内にする。
-const SAVE_ERROR = '進行を保存できないため更新を中止しました。この画面で続けられます。';
-const UPDATE_ERROR = '更新を適用できませんでした。もう一度お試しください。';
+const SAVE_ERROR = '保存できず更新を中止。この画面では続けられます。';
+const UPDATE_ERROR = '更新に失敗しました。再試行してください。';
 
 /** 新版を待機させ、保存できたタブだけが利用者の操作で再読み込みする。 */
 export async function setupOffline(onStatus, button, prepareUpdate) {
   if (!PUBLISHED) {
-    onStatus('ローカル版 · サーバー起動中はネット接続なしで遊べます');
+    onStatus('ローカル版 · サーバー起動中はネット不要');
     return;
   }
   if (!('serviceWorker' in navigator) || !isSecureContext) {
-    onStatus('この環境ではオフライン再起動を利用できません');
+    onStatus('この環境はオフライン再起動非対応です');
     return;
   }
-  onStatus('オフラインで遊ぶ準備をしています…');
+  onStatus('オフライン準備中…');
   try {
     const initialController = navigator.serviceWorker.controller;
     const registration = await navigator.serviceWorker.register(new URL('./sw.js', import.meta.url), { scope: './' });
@@ -29,9 +29,9 @@ export async function setupOffline(onStatus, button, prepareUpdate) {
       button.hidden = !registration.waiting && !changed;
       button.disabled = requested;
       if (requested) onStatus('更新しています…');
-      else if (!button.hidden) onStatus('新しい版を利用できます。進行を引き継いで更新できます。');
+      else if (!button.hidden) onStatus('新版あり。進行を引き継いで更新できます。');
       else if (registration.active) onStatus('オフラインでも遊べます');
-      else if (worker?.state === 'redundant') onStatus('オフライン準備に失敗しました。次回の起動時に再試行します');
+      else if (worker?.state === 'redundant') onStatus('オフライン準備失敗。次回起動時に再試行します');
     }
 
     /** 失敗時は現在のゲームを残し、ボタンからやり直せるようにする。 */
@@ -108,6 +108,6 @@ export async function setupOffline(onStatus, button, prepareUpdate) {
     });
     observe(registration.waiting ?? registration.installing);
   } catch {
-    onStatus('オフライン準備を確認できません。読み込み済みのゲームは遊べます');
+    onStatus('オフライン準備未確認。読込済みのゲームは遊べます');
   }
 }

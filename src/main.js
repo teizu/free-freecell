@@ -2,11 +2,12 @@
  * FreeCell の画面と操作。ルールは game.js、保存は storage.js に任せる。
  * DOM はゲーム状態から描画し、時計と案内だけを個別に更新する。
  */
-import { SUITS, rank, cardLabel, createGame, getBoard, move, quickMove, autoHome, undo, redo, restart, isWon } from './game.js';
+import { SUITS, rank, cardLabel, createGame, getBoard, getActions, move, quickMove, autoHome, undo, redo, restart, isWon } from './game.js';
 import { loadGame, saveGame, saveReload, takeReload } from './storage.js';
 import { setupOffline } from './offline.js';
 import { positionOf, setupDrag } from './drag.js';
 import { setupEffects } from './effects.js';
+import { formatTime, loadRecords, saveRecord } from './records.js';
 
 const find = (id) => document.getElementById(id);
 const boardElement = find('board');
@@ -14,6 +15,8 @@ const maximize = find('maximize');
 const dialog = find('confirm-dialog');
 const storageKey = `freecell:${new URL('./', location.href).pathname}:v1`;
 const reloadKey = `${storageKey}:reload`;
+const recordsKey = `${storageKey}:records`;
+const recordsDialog = find('records-dialog');
 const resumed = takeReload(reloadKey);
 const restored = resumed ? { game: resumed.game, error: null } : loadGame(storageKey);
 let game = restored.game ?? createGame();
@@ -23,8 +26,9 @@ let replacementPending = false;
 let lastCardClick = null;
 let pointerType = '';
 // 読み込み・変更時で同じ保存エラーを案内する。
-const autoSaveError = '自動移動の設定を保存できません。この画面では操作できます。';
+const autoSaveError = '自動設定の保存に失敗。この画面では操作できます。';
 let settingError = '';
+let recordError = '';
 let automaticRun = 0;
 let automaticAnimation = null;
 let landscape = false;
@@ -138,7 +142,7 @@ function settleTime() {
 function showTime() {
   const elapsed = game.elapsedMs + (runningSince === null ? 0 : performance.now() - runningSince);
   const seconds = Math.floor(elapsed / 1000);
-  find('time').textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  find('time').textContent = formatTime(seconds);
 }
 
 /** 勝利・未開始・非表示の時間を除外し、Undo しても経過時間は巻き戻さない。 */
@@ -151,10 +155,42 @@ function refreshClock() {
 /** 保存できない場合もメモリー上のゲームを継続し、専用の案内を残す。 */
 function persist() {
   settleTime();
-  const error = saveGame(storageKey, game) ?? settingError;
+  const error = saveGame(storageKey, game) ?? (settingError || recordError);
   find('storage-status').hidden = !error;
   find('storage-status').textContent = error ?? '';
   return !error;
+}
+
+/** 初回クリアだけを記録する。旧版の局は過去の操作数が不明なのでランキングに含めない。 */
+function recordWin() {
+  if (!game.id || game.recorded || !isWon(getBoard(game))) return;
+  // 保存を再試行しても、最初にクリアした日時・時間・手数を取り直さない。
+  game = { ...game, result: game.result ?? {
+    id: game.id, date: new Date().toISOString(), time: Math.floor(game.elapsedMs / 1000), moves: getActions(game),
+  } };
+  recordError = saveRecord(recordsKey, game.result);
+  if (!recordError) game = { ...game, recorded: true };
+}
+
+/** 保存済みの上位記録を読み直す。日付・値は textContent に渡し、HTML として解釈しない。 */
+function showRecords(event) {
+  event.preventDefault();
+  cancelAutomatic();
+  recordWin();
+  persist();
+  const { records, error } = loadRecords(recordsKey);
+  find('records-status').textContent = error || recordError || 'このブラウザーの各上位3件';
+  records.forEach((entries, index) => {
+    const list = find(index ? 'best-moves' : 'best-time');
+    list.replaceChildren();
+    for (const entry of entries) {
+      const item = document.createElement('li');
+      item.textContent = `${index ? `${entry.moves}手` : formatTime(entry.time)} · ${new Date(entry.date).toLocaleDateString('ja-JP')}`;
+      list.append(item);
+    }
+    if (!entries.length) list.textContent = '記録はありません';
+  });
+  recordsDialog.showModal();
 }
 
 /** 更新の要求前に保存を確認し、再読込の直前にタブ専用の引き継ぎも確定する。 */
@@ -260,7 +296,7 @@ function render() {
     tableau.append(column);
   });
   boardElement.replaceChildren(topGroup(board, 'cells', 'フリーセル'), topGroup(board, 'foundations', 'ホームセル'), tableau);
-  find('moves').textContent = game.cursor;
+  find('moves').textContent = getActions(game);
   find('progress').textContent = board.foundations.reduce((sum, pile) => sum + pile.length, 0);
   find('undo').disabled = game.cursor === 0;
   find('redo').disabled = game.cursor + 1 === game.history.length;
@@ -268,6 +304,7 @@ function render() {
   effects.win(isWon(board));
   fitBoard();
   refreshClock();
+  recordWin();
   if (focusPosition) {
     const sameCard = focusCard === undefined ? null : boardElement.querySelector(`[data-card="${focusCard}"]`);
     const samePile = boardElement.querySelector(`[data-zone="${focusPosition.zone}"][data-index="${focusPosition.index}"]`);
@@ -284,7 +321,7 @@ function clearSelection() {
   if (!selected) return;
   selected = null;
   updateSelection();
-  announce('選択を解除しました。');
+  announce('選択解除。');
 }
 
 /** 後続の自動移動を止め、確定済みの札はホームの最終位置へ戻す。 */
@@ -297,7 +334,7 @@ function cancelAutomatic() {
 }
 
 /** 最初の成功した移動を待ち、以後は 1 枚ずつ確定・保存・演出する。明示的な自動ボタンは別扱い。 */
-async function finishMove(message, automatic = game.started && find('auto-enabled').checked) {
+async function finishMove(message, automatic = game.started && find('auto-enabled').checked, moved = false) {
   cancelAutomatic();
   const run = automaticRun;
   let count = 0;
@@ -336,7 +373,8 @@ async function finishMove(message, automatic = game.started && find('auto-enable
       boardElement.parentElement.classList.remove('auto-active');
     }
   }
-  if (count) message = `${count} 枚を自動でホームセルへ送りました。`;
+  if (count) message = `${count}枚を自動でホームへ移動。`;
+  if ((moved || count) && isWon(getBoard(game))) effects.celebrate();
   announce(isWon(getBoard(game)) ? 'クリア！' : message);
 }
 
@@ -348,7 +386,7 @@ function tryMove(from, to) {
   else {
     game = result.game;
     effects.move(to.zone, isWon(getBoard(game)));
-    finishMove('移動しました。');
+    finishMove('移動完了。', undefined, true);
   }
 }
 
@@ -374,7 +412,7 @@ function choosePosition(event) {
       const sentHome = getBoard(result.game).foundations.some((pile, index) => pile.length > getBoard(game).foundations[index].length);
       game = result.game;
       effects.move(sentHome ? 'foundations' : 'cells', isWon(getBoard(game)));
-      finishMove('移動しました。');
+      finishMove('移動完了。', undefined, true);
     }
     return;
   }
@@ -384,17 +422,17 @@ function choosePosition(event) {
   }
   if (!selected) {
     if (position.zone === 'foundations') {
-      announce('ホームセルからの移動は「戻す」で取り消せます。');
+      announce('ホームの取消は「戻す」。');
       return;
     }
     if (button.dataset.card === undefined) {
-      announce('まず移動するカードを選んでください。');
+      announce('まず移動する札を選択。');
       return;
     }
     selected = position;
     const count = position.zone === 'tableau' ? getBoard(game).tableau[position.index].length - position.offset : 1;
     updateSelection();
-    announce(`${cardLabel(Number(button.dataset.card))}${count > 1 ? `から ${count} 枚` : ''}を選択しました。移動先を選んでください。`);
+    announce(`${cardLabel(Number(button.dataset.card))}${count > 1 ? `から ${count} 枚` : ''}を選択。次に移動先を選択。`);
     return;
   }
   tryMove(selected, position);
@@ -407,8 +445,8 @@ async function confirmReplacement(restarting) {
   find('confirm-cancel').textContent = restarting ? 'リセットしない' : '続けて遊ぶ';
   find('confirm-accept').textContent = restarting ? 'リセットする' : '切り替える';
   find('confirm-text').textContent = restarting
-    ? '同じ配りで最初から始めます。現在の進行と履歴は消えます。'
-    : '別の配りで始めます。現在の進行と履歴は消えます。';
+    ? '同じ配りに戻し、進行・履歴を消去します。'
+    : '別の配りに替え、進行・履歴を消去します。';
   dialog.returnValue = 'cancel';
   return new Promise((resolve) => {
     dialog.addEventListener('close', () => resolve(dialog.returnValue === 'accept'), { once: true });
@@ -425,8 +463,9 @@ async function replaceGame(restarting) {
   try {
     if (!await confirmReplacement(restarting)) return;
     runningSince = null;
+    recordError = '';
     game = restarting ? restart(game) : createGame();
-    finishMove(restarting ? '同じ配りで最初から始めました。' : '新しいゲームを始めました。');
+    finishMove(restarting ? '同じ配りで再開。' : '新規ゲーム開始。');
     // 新しい配りの確定時だけ鳴らし、確認の取り消し・リセット・保存局の復元とは区別する。
     if (!restarting) effects.start();
   } finally {
@@ -462,7 +501,7 @@ const effects = setupEffects(boardElement, find('sound-toggle'), `${storageKey}:
 for (const type of ['pointerdown', 'click', 'keydown']) document.addEventListener(type, cancelAutomatic, true);
 find('auto-home').addEventListener('click', () => {
   settleTime();
-  finishMove('安全に送れるカードはありません。', true);
+  finishMove('安全に送れる札はありません。', true);
 });
 find('auto-enabled').addEventListener('change', () => {
   try {
@@ -472,7 +511,7 @@ find('auto-enabled').addEventListener('change', () => {
     settingError = autoSaveError;
   }
   settleTime();
-  finishMove(find('auto-enabled').checked ? '自動移動をオンにしました。' : '自動移動をオフにしました。');
+  finishMove(find('auto-enabled').checked ? '自動移動オン。' : '自動移動オフ。');
 });
 window.addEventListener('resize', () => { cancelAutomatic(); fitBoard(); });
 window.visualViewport?.addEventListener('resize', fitBoard);
@@ -483,20 +522,22 @@ document.addEventListener('fullscreenchange', syncFullscreen);
 find('new-game').addEventListener('click', () => replaceGame(false));
 find('win-new').addEventListener('click', () => replaceGame(false));
 find('restart').addEventListener('click', () => replaceGame(true));
-find('undo').addEventListener('click', () => changeHistory(undo, '1 手戻しました。'));
-find('redo').addEventListener('click', () => changeHistory(redo, '1 手やり直しました。'));
+find('undo').addEventListener('click', () => changeHistory(undo, '1手戻しました。'));
+find('redo').addEventListener('click', () => changeHistory(redo, '1手やり直しました。'));
+find('records-link').addEventListener('click', showRecords);
 document.addEventListener('keydown', (event) => {
   // 入力欄の編集や IME・確認ダイアログでは、ブラウザー本来のキー操作を優先する。
   const editing = event.target.closest('input:not([type=checkbox]), textarea, select') || event.target.isContentEditable;
-  if (!dialog.open && !editing && !event.isComposing && !event.altKey && !event.shiftKey
+  const modal = dialog.open || recordsDialog.open;
+  if (!modal && !editing && !event.isComposing && !event.altKey && !event.shiftKey
     && (event.ctrlKey || event.metaKey)) {
     const key = event.key.toLowerCase();
     if (key === 'z' || key === 'y') {
       event.preventDefault();
-      changeHistory(key === 'z' ? undo : redo, key === 'z' ? '1 手戻しました。' : '1 手やり直しました。');
+      changeHistory(key === 'z' ? undo : redo, key === 'z' ? '1手戻しました。' : '1手やり直しました。');
     }
   }
-  if (event.key === 'Escape' && !dialog.open) {
+  if (event.key === 'Escape' && !modal) {
     if (maximized) toggleMaximize();
     lastCardClick = null;
     clearSelection();
@@ -524,7 +565,7 @@ setInterval(() => {
 
 render();
 if (restored.error) announce(restored.error);
-else if (isWon(getBoard(game))) announce('クリア済みです。「もう一局遊ぶ」で次の対局へ。');
-else if (restored.game) announce('保存したゲームを復元しました。');
+else if (isWon(getBoard(game))) announce('クリア済み。「もう一局遊ぶ」で次へ。');
+else if (restored.game) announce('保存局を復元。');
 persist();
 setupOffline((status) => { find('offline-status').textContent = status; }, find('apply-update'), prepareUpdate);

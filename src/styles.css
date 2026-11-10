@@ -50,7 +50,7 @@ h1 { font-size: 1.35rem; margin: 0; letter-spacing: -.03em; }
 .actions { display: flex; gap: .5rem; }
 .auto-toggle { display: flex; align-items: center; gap: .35rem; font-size: .875rem; white-space: nowrap; cursor: pointer; }
 .auto-toggle input { margin: 0; accent-color: #214e3c; }
-.scoreboard { display: flex; gap: 2rem; margin: 1rem 0 .5rem; }
+.scoreboard { display: inline-flex; gap: 2rem; margin: .5rem 0; }
 .scoreboard > div { display: flex; align-items: baseline; gap: .65rem; }
 dt { font-size: .8rem; color: #536658; }
 dd { margin: 0; font-size: 1.25rem; font-weight: 650; font-variant-numeric: tabular-nums; }
@@ -134,6 +134,10 @@ dialog { width: min(100% - 2rem, 28rem); padding: 1.5rem; color: #263b32; backgr
 dialog::backdrop { background: #102b26a6; }
 dialog h2 { font-size: 1.2rem; margin-top: 0; }
 .dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: .65rem; margin-top: 1.5rem; }
+/* ランキングは短い画面でもダイアログ内をスクロールできる。リンクは最大化の左欄にも残す。 */
+#records-link { display: inline-block; padding-block: .3rem; font-size: .8rem; }
+#records-dialog { max-height: 90dvh; overflow: auto; }
+#records-dialog h3 { font-size: 1rem; margin-bottom: .3rem; }
 /* 小画面は全 8 列を並べる。高さと重なり幅は残り画面高に応じて JS で調整する。 */
 @media (max-width: 800px), (max-height: 500px) {
   .site-header, main, .site-footer { width: calc(100% - 1rem); }
@@ -165,7 +169,7 @@ dialog h2 { font-size: 1.2rem; margin-top: 0; }
 .maximized .controls { visibility: visible; position: fixed; inset: 0 auto 56px 0; z-index: 201; width: var(--menu); padding: 8px; overflow: auto; }
 .maximized .toolbar { flex-flow: column nowrap; }
 /* 時間・手数・ホーム枚数は既存の表示を縦に並べ、更新処理も通常画面と共有する。 */
-.maximized .scoreboard { flex-direction: column; gap: 0; }
+.maximized .scoreboard { display: flex; flex-direction: column; gap: 0; }
 .maximized .scoreboard > div { justify-content: space-between; }
 .maximized .actions { display: contents; }
 /* 同じ音声ボタンを左下に置く。操作欄はその上端までに収め、スクロール中も重ねない。 */

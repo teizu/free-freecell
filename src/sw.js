@@ -5,12 +5,15 @@ const BASE = new URL('./', self.location.href);
 const PREFIX = `freecell:${BASE.pathname}:`;
 const CACHE = `${PREFIX}${VERSION}`;
 const URLS = new Map(ASSETS.map(([path, hash]) => [new URL(path, BASE).href, hash]));
+// インストール時の再利用と、旧タブからの要求で同じファイル種別を扱う。
+const HASHED_ASSET = /-[a-f0-9]{12}\.(js|css|woff2|txt)$/;
 
 /** CDN の更新途中や壊れた保存内容を、新版のキャッシュへ混入させない。 */
 async function verify(response, expected) {
   if (!response.ok) throw new Error('アプリの取得に失敗しました。');
   const buffer = await crypto.subtle.digest('SHA-256', await response.clone().arrayBuffer());
-  const hash = Array.from(new Uint8Array(buffer), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  // Base64 化するのは日本語本文ではなく、SHA-256 の固定長 32 バイトだけ。
+  const hash = btoa(String.fromCharCode(...new Uint8Array(buffer)));
   if (hash !== expected) throw new Error('アプリの版が揃っていません。');
   return response;
 }
@@ -46,7 +49,7 @@ async function install() {
     for (const [url, expected] of URLS) {
       let response;
       // HTML は固定 URL なので旧版を再利用しない。内容付き URL は同梱フォントも再利用する。
-      if (/\-[a-f0-9]{12}\.(js|css|woff2|txt)$/.test(new URL(url).pathname)) {
+      if (HASHED_ASSET.test(new URL(url).pathname)) {
         for (const name of previous) {
           response = await (await caches.open(name)).match(url);
           if (response) break;
@@ -105,7 +108,7 @@ self.addEventListener('fetch', (event) => {
     url.search = '';
   }
   if (URLS.has(url.href)) event.respondWith(serve(url.href));
-  else if (url.pathname.startsWith(BASE.pathname) && /-[a-f0-9]{12}\.(js|css|woff2|txt)$/.test(url.pathname)) {
+  else if (url.pathname.startsWith(BASE.pathname) && HASHED_ASSET.test(url.pathname)) {
     event.respondWith(previousAsset(event.request));
   }
 });
