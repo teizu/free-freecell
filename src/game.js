@@ -11,10 +11,10 @@ export const SUITS = [
   { symbol: '♣', name: 'クラブ', color: 'black' },
 ];
 
-// 場所の識別値を共有する。保存される盤面のキーや値は従来のままに保つ。
-const TABLEAU = 'tableau';
-const HOME = 'foundations';
-const CELLS = 'cells';
+// ルールと画面で場所の識別値を共有する。保存される盤面のキーや値は従来のままに保つ。
+export const TABLEAU = 'tableau';
+export const HOME = 'foundations';
+export const CELLS = 'cells';
 
 export const rank = (card) => card % 13 + 1;
 const suit = (card) => Math.floor(card / 13);

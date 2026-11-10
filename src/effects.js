@@ -2,6 +2,9 @@
  * 音声ファイルを使わない効果音と、クリア後のキングの演出。
  * ゲーム状態や履歴は変更せず、非表示・動きを減らす設定では演出を止める。
  */
+import { TABLEAU, HOME, CELLS } from './game.js';
+
+/** 音声設定と勝利演出を準備し、画面側からの開始・停止要求を受け付ける。 */
 export function setupEffects(board, button, key) {
   let enabled = true;
   let context;
@@ -45,13 +48,14 @@ export function setupEffects(board, button, key) {
     const oscillator = context.createOscillator();
     const gain = context.createGain();
     const now = context.currentTime;
-    const home = kind === 'foundations';
+    const home = kind === HOME;
     const completed = kind === 'win';
+    const starting = kind === 'start';
     // 開始はド・ミ・ソ。クリアはさらに高いド・ソ・高いソと続け、最後を長く響かせる。
-    const notes = completed ? [523, 659, 784, 1047, 784, 1568] : kind === 'start' ? [523, 659, 784]
-      : [home ? 900 : kind === 'cells' ? 720 : kind === 'tableau' ? 660 : 600];
+    const notes = completed ? [523, 659, 784, 1047, 784, 1568] : starting ? [523, 659, 784]
+      : [home ? 900 : kind === CELLS ? 720 : kind === TABLEAU ? 660 : 600];
     if (completed) oscillator.type = 'triangle';
-    const duration = completed ? .3 : kind === 'start' ? .1 : home ? .09 : kind === 'click' ? .025 : .06;
+    const duration = completed ? .3 : starting ? .1 : home ? .09 : kind === 'click' ? .025 : .06;
     notes.forEach((frequency, index) => {
       const start = now + index * .12;
       const length = completed && index < notes.length - 1 ? .1 : duration;

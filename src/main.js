@@ -2,7 +2,7 @@
  * FreeCell の画面と操作。ルールは game.js、保存は storage.js に任せる。
  * DOM はゲーム状態から描画し、時計と案内だけを個別に更新する。
  */
-import { SUITS, rank, cardLabel, createGame, getBoard, getActions, move, quickMove, autoHome, undo, redo, restart, isWon } from './game.js';
+import { TABLEAU, HOME, CELLS, SUITS, rank, cardLabel, createGame, getBoard, getActions, move, quickMove, autoHome, undo, redo, restart, isWon } from './game.js';
 import { loadGame, saveGame, saveReload, takeReload } from './storage.js';
 import { setupOffline } from './offline.js';
 import { positionOf, setupDrag } from './drag.js';
@@ -179,7 +179,7 @@ function showRecords(event) {
   recordWin();
   persist();
   const { records, error } = loadRecords(recordsKey);
-  find('records-status').textContent = error || recordError || 'このブラウザーの各上位3件';
+  find('records-status').textContent = error || recordError;
   records.forEach((entries, index) => {
     const list = find(index ? 'best-moves' : 'best-time');
     list.replaceChildren();
@@ -191,6 +191,8 @@ function showRecords(event) {
     if (!entries.length) list.textContent = '記録はありません';
   });
   recordsDialog.showModal();
+  // 背後の勝利演出を止める。表示中のタブ復帰や動き設定の変更でも再開させない。
+  effects.win(false);
 }
 
 /** 更新の要求前に保存を確認し、再読込の直前にタブ専用の引き継ぎも確定する。 */
@@ -205,7 +207,7 @@ function prepareUpdate(reloading) {
 function markSelection(button) {
   const { zone, index, offset } = button.dataset;
   const active = selected?.zone === zone && selected.index === Number(index)
-    && (zone !== 'tableau' || Number(offset) >= selected.offset);
+    && (zone !== TABLEAU || Number(offset) >= selected.offset);
   button.setAttribute('aria-pressed', String(Boolean(active)));
   button.setAttribute('aria-label', button.dataset.label + (active ? '、選択中' : ''));
 }
@@ -231,7 +233,7 @@ function cardButton(card, zone, index, offset) {
   const button = positionButton(zone, index, offset);
   button.className = `card ${suit.color}`;
   button.dataset.card = card;
-  const place = zone === 'tableau' ? `場札 ${index + 1}` : zone === 'cells' ? `フリーセル ${index + 1}` : 'ホームセル';
+  const place = zone === TABLEAU ? `場札 ${index + 1}` : zone === CELLS ? `フリーセル ${index + 1}` : 'ホームセル';
   button.dataset.label = `${place}、${cardLabel(card)}`;
   markSelection(button);
   const face = document.createElement('span');
@@ -247,9 +249,9 @@ function cardButton(card, zone, index, offset) {
 function emptyButton(zone, index) {
   const button = positionButton(zone, index);
   button.className = 'empty-slot';
-  const label = zone === 'tableau' ? `場札 ${index + 1}` : zone === 'cells' ? `フリーセル ${index + 1}` : `${SUITS[index].name}のホームセル`;
+  const label = zone === TABLEAU ? `場札 ${index + 1}` : zone === CELLS ? `フリーセル ${index + 1}` : `${SUITS[index].name}のホームセル`;
   button.setAttribute('aria-label', `${label}、空き`);
-  button.textContent = zone === 'foundations' ? `${SUITS[index].symbol}\uFE0E` : '+';
+  button.textContent = zone === HOME ? `${SUITS[index].symbol}\uFE0E` : '+';
   return button;
 }
 
@@ -263,7 +265,7 @@ function topGroup(board, zone, title) {
   const slots = document.createElement('div');
   slots.className = 'top-slots';
   for (let index = 0; index < 4; index += 1) {
-    const card = zone === 'cells' ? board.cells[index] : board.foundations[index].at(-1);
+    const card = zone === CELLS ? board.cells[index] : board.foundations[index].at(-1);
     slots.append(card == null ? emptyButton(zone, index) : cardButton(card, zone, index));
   }
   section.append(heading, slots);
@@ -280,22 +282,22 @@ function render() {
   const focusPosition = focused ? { ...focused } : null;
   const board = getBoard(game);
   const tableau = document.createElement('section');
-  tableau.className = 'tableau';
+  tableau.className = TABLEAU;
   tableau.setAttribute('aria-label', '場札');
   board.tableau.forEach((cards, index) => {
     const column = document.createElement('div');
     column.className = 'column';
     column.dataset.column = index;
     column.style.minHeight = `calc(var(--card-height) + ${Math.max(0, cards.length - 1)} * var(--card-step))`;
-    if (!cards.length) column.append(emptyButton('tableau', index));
+    if (!cards.length) column.append(emptyButton(TABLEAU, index));
     cards.forEach((card, offset) => {
-      const button = cardButton(card, 'tableau', index, offset);
+      const button = cardButton(card, TABLEAU, index, offset);
       button.style.top = `calc(${offset} * var(--card-step))`;
       column.append(button);
     });
     tableau.append(column);
   });
-  boardElement.replaceChildren(topGroup(board, 'cells', 'フリーセル'), topGroup(board, 'foundations', 'ホームセル'), tableau);
+  boardElement.replaceChildren(topGroup(board, CELLS, 'フリーセル'), topGroup(board, HOME, 'ホームセル'), tableau);
   find('moves').textContent = getActions(game);
   find('progress').textContent = board.foundations.reduce((sum, pile) => sum + pile.length, 0);
   find('undo').disabled = game.cursor === 0;
@@ -355,7 +357,7 @@ async function finishMove(message, automatic = game.started && find('auto-enable
     count += result.count;
     render();
     persist();
-    effects.move('foundations', isWon(getBoard(game)));
+    effects.move(HOME, isWon(getBoard(game)));
     if (animate) {
       const card = boardElement.querySelector(selector);
       const to = card.getBoundingClientRect();
@@ -411,7 +413,7 @@ function choosePosition(event) {
     else {
       const sentHome = getBoard(result.game).foundations.some((pile, index) => pile.length > getBoard(game).foundations[index].length);
       game = result.game;
-      effects.move(sentHome ? 'foundations' : 'cells', isWon(getBoard(game)));
+      effects.move(sentHome ? HOME : CELLS, isWon(getBoard(game)));
       finishMove('移動完了。', undefined, true);
     }
     return;
@@ -421,7 +423,7 @@ function choosePosition(event) {
     return;
   }
   if (!selected) {
-    if (position.zone === 'foundations') {
+    if (position.zone === HOME) {
       announce('ホームの取消は「戻す」。');
       return;
     }
@@ -430,7 +432,7 @@ function choosePosition(event) {
       return;
     }
     selected = position;
-    const count = position.zone === 'tableau' ? getBoard(game).tableau[position.index].length - position.offset : 1;
+    const count = position.zone === TABLEAU ? getBoard(game).tableau[position.index].length - position.offset : 1;
     updateSelection();
     announce(`${cardLabel(Number(button.dataset.card))}${count > 1 ? `から ${count} 枚` : ''}を選択。次に移動先を選択。`);
     return;
@@ -497,6 +499,8 @@ const cancelDrag = setupDrag(boardElement, {
   cancel: clearSelection,
 });
 const effects = setupEffects(boardElement, find('sound-toggle'), `${storageKey}:sound`);
+// 閉じるボタンと Escape の両方で、現在の盤面に応じた独立回転へ戻す。
+recordsDialog.addEventListener('close', () => effects.win(isWon(getBoard(game))));
 // ドラッグ後の疑似 click を除外した後で、利用者の次の入力を優先して自動移動を止める。
 for (const type of ['pointerdown', 'click', 'keydown']) document.addEventListener(type, cancelAutomatic, true);
 find('auto-home').addEventListener('click', () => {

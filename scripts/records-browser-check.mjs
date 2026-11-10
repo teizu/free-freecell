@@ -1,4 +1,4 @@
-/** 成績の保存・一覧・小画面・オフラインと、4 枚同時の絵札回転を実 Chromium で確認する。 */
+/** 成績の左右表示・保存・背後の演出停止・オフラインを実 Chromium で確認する。 */
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -20,12 +20,17 @@ function nearWin(seconds, actions) {
 }
 
 /** ランキングダイアログを表示し、各リストを文字列として取り出す。 */
-async function ranking(page) {
+async function ranking(page, expectedError = null) {
   await page.evaluate('document.querySelector("#records-link").focus()');
   await key(page, 'Enter');
   assert.equal(await page.evaluate('document.querySelector("#records-dialog").open'), true);
   assert.equal(await page.evaluate('document.activeElement.id'), 'records-title');
   assert.equal(await page.evaluate('document.querySelector("#records-dialog").scrollTop'), 0);
+  const status = await textOf(page, '#records-status');
+  if (expectedError) assert.match(status, expectedError);
+  else assert.equal(status, '', 'Normal rankings need no explanatory sentence');
+  assert.equal(await page.evaluate('document.querySelector("#records-dialog").textContent.includes("最速時間")'), true);
+  assert.equal(await page.evaluate('document.querySelector("#records-dialog").textContent.includes("最短クリア時間")'), false);
   return page.evaluate('["best-time", "best-moves"].map(id => [...document.getElementById(id).children].map(item => item.textContent))');
 }
 
@@ -35,6 +40,57 @@ async function closeRanking(page) {
   await pointerClick(page, '#records-dialog button');
   assert.equal(await page.evaluate('document.querySelector("#records-dialog").open'), false);
   assert.equal(await page.evaluate('document.activeElement.id'), 'records-link');
+}
+
+/** ダイアログを開いている間、回転も次の予約も進まないことを実時間で確認する。 */
+async function assertMotionStopped(page, count, label) {
+  const faces = await page.evaluate('[...document.querySelectorAll(".foundations .card-face")].map(face => face.textContent)');
+  await pause(1200);
+  assert.equal(await page.evaluate('celebrationAudit.length'), count, label + ': no new animation starts');
+  assert.equal(await page.evaluate('document.querySelector("#board").getAnimations({ subtree: true }).some(animation => animation.playState === "running")'), false,
+    label + ': no animation runs behind the popup');
+  assert.deepEqual(await page.evaluate('[...document.querySelectorAll(".foundations .card-face")].map(face => face.textContent)'), faces,
+    label + ': card glyphs stay still');
+}
+
+/** 祝賀と独立回転を止め、タブ復帰・設定変更でも停止を保ち、閉じた後だけ再開する。 */
+async function checkPopupMotion(page, browser) {
+  // 旧形式の fixture は成績対象外なので、既に検証したランキングを変更しない。
+  await loadFixture(page, nearWinGame(engine), server.url);
+  await page.click('#auto-home');
+  await waitAutomatic(page);
+  await page.waitFor('celebrationAudit.some(item => item.duration === 250)', 'celebration begins before ranking');
+  const snapshot = await page.evaluate(`localStorage.getItem(${JSON.stringify(storageKey)})`);
+  await ranking(page);
+  let stopped = await page.evaluate('celebrationAudit.length');
+  await assertMotionStopped(page, stopped, 'Celebration interrupted by ranking');
+
+  const other = await browser.page();
+  await other.command('Page.bringToFront');
+  await page.waitFor('document.hidden', 'ranking tab hidden');
+  await page.command('Page.bringToFront');
+  await page.waitFor('!document.hidden', 'ranking tab restored');
+  await other.command('Page.close');
+  await assertMotionStopped(page, stopped, 'Tab visibility changes while ranking is open');
+  for (const value of ['reduce', 'no-preference']) {
+    await page.command('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value }] });
+  }
+  await assertMotionStopped(page, stopped, 'Motion preference changes while ranking is open');
+
+  await key(page, 'Escape');
+  await page.waitFor('!document.querySelector("#records-dialog").open', 'ranking closed with Escape');
+  assert.equal(await page.evaluate('document.activeElement.id'), 'records-link');
+  await page.waitFor(`celebrationAudit.length > ${stopped}`, 'independent rotation resumes after Escape', 3000);
+  assert.equal(await page.evaluate('celebrationAudit.at(-1).frames.at(-1).transform'), 'rotateY(360deg)',
+    'Closing the popup resumes independent rotations without replaying the celebration');
+
+  await ranking(page);
+  stopped = await page.evaluate('celebrationAudit.length');
+  await assertMotionStopped(page, stopped, 'Independent rotation interrupted by ranking');
+  await closeRanking(page);
+  await page.waitFor(`celebrationAudit.length > ${stopped}`, 'independent rotation resumes after close button', 3000);
+  assert.equal(await page.evaluate(`localStorage.getItem(${JSON.stringify(storageKey)})`), snapshot,
+    'Pausing and resuming decoration never changes the completed game');
 }
 
 try {
@@ -48,6 +104,8 @@ try {
   // Web Animations の実処理はそのまま残し、各スートの開始時刻と指定時間を観測する。
   const audit = await page.command('Page.addScriptToEvaluateOnNewDocument', { source: `(() => {
     window.celebrationAudit = [];
+    // 最短の1秒待機・100ms回転に固定し、停止中に予約が発火しないことも短時間で検証する。
+    Math.random = () => 0;
     const animate = Element.prototype.animate;
     Element.prototype.animate = function(frames, options) {
       if (this.matches('.foundations .card')) celebrationAudit.push({ card: this.dataset.card, at: performance.now(), frames, duration: options.duration });
@@ -96,24 +154,51 @@ try {
   await page.navigate(server.url);
   assert.deepEqual(await page.evaluate(`JSON.parse(localStorage.getItem(${JSON.stringify(recordsKey)}))`), records, 'Undo/Redo and restoration must not duplicate a completed attempt');
 
-  for (const [width, height] of [[1280, 900], [390, 844], [844, 390]]) {
+  for (const [width, height] of [[1280, 900], [320, 568], [390, 844], [844, 390]]) {
     await page.command('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 900 });
     await page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
     if (width < 900) await page.click('#maximize');
     const lists = await ranking(page);
     assert.equal(lists[0].length, 3);
     assert.deepEqual(lists[1].map(text => text.split(' · ')[0]), ['52手', '60手', '70手']);
+    for (const list of lists) for (const item of list) assert.match(item, /\d{4}\/\d{1,2}\/\d{1,2}/, 'Each result keeps its achievement date');
     const actions = await textOf(page, '#moves');
     await key(page, 'z', 2);
     assert.equal(await textOf(page, '#moves'), actions, 'History shortcuts do not operate behind the dialog');
     const bounds = await page.evaluate(`(() => { const d = document.querySelector('#records-dialog'); const r = d.getBoundingClientRect(); return { left:r.left, right:r.right, top:r.top, bottom:r.bottom, width:innerWidth, height:innerHeight }; })()`);
     assert.ok(bounds.left >= 0 && bounds.top >= 0 && bounds.right <= bounds.width && bounds.bottom <= bounds.height);
+    const columns = await page.evaluate(`(() => {
+      const dialog = document.querySelector('#records-dialog');
+      return { overflow: dialog.scrollWidth > dialog.clientWidth,
+        columns: ['best-time', 'best-moves'].map(id => {
+          const list = document.getElementById(id); const rect = list.getBoundingClientRect();
+          return { left: rect.left, right: rect.right, top: rect.top,
+            overflow: list.scrollWidth > list.clientWidth,
+            // 項目数だけでなく文字の行矩形も測り、日付の折り返しを検出する。
+            rows: [...list.children].map(item => {
+              const box = item.getBoundingClientRect();
+              const range = document.createRange();
+              range.selectNodeContents(item);
+              return { top: box.top, bottom: box.bottom, lines: new Set([...range.getClientRects()].map(rect => rect.top)).size };
+            }) };
+        }) };
+    })()`);
+    const [left, right] = columns.columns;
+    assert.ok(left.right <= right.left + 1 && Math.abs(left.top - right.top) < 1,
+      `Time and moves are aligned side by side at ${width}px: ${JSON.stringify(columns)}`);
+    assert.equal(columns.overflow || left.overflow || right.overflow, false, 'Both columns fit without horizontal scrolling');
+    for (let index = 0; index < 3; index += 1) {
+      assert.ok(Math.abs(left.rows[index].top - right.rows[index].top) < 1, 'Each of the three ranking rows aligns across columns');
+      assert.equal(left.rows[index].lines, 1, `Time result ${index + 1} stays on one line at ${width}px`);
+      assert.equal(right.rows[index].lines, 1, `Move result ${index + 1} stays on one line at ${width}px`);
+    }
     const shot = await page.command('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
     await writeFile(join(temp, `ranking-${width}x${height}.png`), Buffer.from(shot.data, 'base64'));
     await closeRanking(page);
     if (width < 900) await page.click('#maximize');
   }
   await page.command('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  await checkPopupMotion(page, browser);
   await loadFixture(page, nearWinGame(engine), server.url);
   await page.click('#auto-home');
   await waitAutomatic(page);
@@ -129,6 +214,8 @@ try {
   await waitAutomatic(page);
   assert.equal(await page.evaluate('document.querySelector("#win-panel").hidden'), false);
   assert.match(await textOf(page, '#storage-status'), /成績を保存できません/);
+  await ranking(page, /成績を保存できません/);
+  await closeRanking(page);
   const pending = await page.evaluate(`JSON.parse(localStorage.getItem(${JSON.stringify(storageKey)})).result`);
   // 保存失敗の後で Undo/Redo して翌日に再試行しても、最初の達成を登録する。
   await page.click('#undo');
@@ -153,8 +240,9 @@ try {
   assert.equal((await ranking(page))[0].length, 3);
   assert.deepEqual(await page.evaluate(`JSON.parse(localStorage.getItem(${JSON.stringify(recordsKey)}))`), finalRecords);
   assert.equal(browser.errors.length, 0, JSON.stringify(browser.errors));
-  console.log('PASS records: independent top three/date/ties, new attempts only, cumulative actions, no duplicate win, modal/keyboard/fullscreen, denied-write retry and offline restart');
+  console.log('PASS records: two aligned columns at 320/390/844/1280px, no explanatory sentence, fastest-time heading, dates/top-three/ties, modal/keyboard/fullscreen, denied-write retry and offline restart');
   console.log('PASS celebration: four concurrent K/Q/J/K flips, 500/100/200/100/200 ms, unchanged game history');
+  console.log('PASS ranking motion: celebration and independent rotation stop behind popup, remain stopped through visibility/motion-preference changes, resume only after Escape or close button');
   console.log('Screenshots: ' + temp);
 } finally {
   await browser?.close();

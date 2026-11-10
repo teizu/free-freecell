@@ -1,5 +1,7 @@
 /** マウス・タッチのドラッグを共通化する。合法性と履歴は呼び出し元に任せる。 */
 
+import { TABLEAU, HOME } from './game.js';
+
 /** ボタンに記録された位置を、ゲームの操作で使う数値へ戻す。 */
 export function positionOf(button) {
   const { zone, index, offset } = button.dataset;
@@ -18,7 +20,7 @@ export function setupDrag(board, { start, drop, cancel }) {
     const button = element.closest('button[data-zone]');
     if (button) return positionOf(button);
     const column = element.closest('[data-column]');
-    return column ? { zone: 'tableau', index: Number(column.dataset.column) } : null;
+    return column ? { zone: TABLEAU, index: Number(column.dataset.column) } : null;
   }
 
   /** 先にジェスチャーを閉じてから画面へ通知し、再描画や capture 解除の再入を防ぐ。 */
@@ -53,7 +55,7 @@ export function setupDrag(board, { start, drop, cancel }) {
     }
     if (event.button !== 0) return;
     const button = event.target.closest('button[data-card]');
-    if (!button || button.dataset.zone === 'foundations') return;
+    if (!button || button.dataset.zone === HOME) return;
     gesture = { id: event.pointerId, x: event.clientX, y: event.clientY, button, from: positionOf(button) };
   });
   /** 8px 以上の移動から札を捕捉し、連続札も同じ距離だけ追従させる。 */
@@ -69,7 +71,7 @@ export function setupDrag(board, { start, drop, cancel }) {
       if (Math.hypot(dx, dy) < 8) return;
       board.setPointerCapture(gesture.id);
       const { button, from } = gesture;
-      gesture.cards = from.zone === 'tableau'
+      gesture.cards = from.zone === TABLEAU
         ? [...button.parentElement.querySelectorAll('[data-card]')].filter(card => Number(card.dataset.offset) >= from.offset)
         : [button];
       start(from);

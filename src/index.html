@@ -89,8 +89,10 @@
     <dialog id="records-dialog" aria-labelledby="records-title">
       <h2 id="records-title" tabindex="-1" autofocus>成績ランキング</h2>
       <p id="records-status" role="status"></p>
-      <h3>最短クリア時間</h3><ol id="best-time"></ol>
-      <h3>最小手数</h3><ol id="best-moves"></ol>
+      <table>
+        <thead><tr><th>最速時間</th><th>最小手数</th></tr></thead>
+        <tbody><tr><td><ol id="best-time"></ol></td><td><ol id="best-moves"></ol></td></tr></tbody>
+      </table>
       <form method="dialog"><button>閉じる</button></form>
     </dialog>
   </body>

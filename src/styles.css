@@ -136,8 +136,10 @@ dialog h2 { font-size: 1.2rem; margin-top: 0; }
 .dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: .65rem; margin-top: 1.5rem; }
 /* ランキングは短い画面でもダイアログ内をスクロールできる。リンクは最大化の左欄にも残す。 */
 #records-link { display: inline-block; padding-block: .3rem; font-size: .8rem; }
-#records-dialog { max-height: 90dvh; overflow: auto; }
-#records-dialog h3 { font-size: 1rem; margin-bottom: .3rem; }
+#records-dialog { max-height: 90dvh; overflow: auto; padding: 1rem; }
+#records-status:empty { display: none; }
+#records-dialog table { width: 100%; table-layout: fixed; font-size: .75rem; text-align: left; }
+#records-dialog ol { padding: 0; list-style: none; }
 /* 小画面は全 8 列を並べる。高さと重なり幅は残り画面高に応じて JS で調整する。 */
 @media (max-width: 800px), (max-height: 500px) {
   .site-header, main, .site-footer { width: calc(100% - 1rem); }
