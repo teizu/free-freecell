@@ -93,7 +93,13 @@
         <thead><tr><th>最速時間</th><th>最小手数</th></tr></thead>
         <tbody><tr><td><ol id="best-time"></ol></td><td><ol id="best-moves"></ol></td></tr></tbody>
       </table>
-      <form method="dialog"><button>閉じる</button></form>
+      <form method="dialog" class="dialog-actions">
+        <span id="record-actions" hidden>
+          <button class="primary" value="new">つづけてチャレンジ</button>
+          <button value="records">ランキングを見る</button>
+        </span>
+        <button value="close">閉じる</button>
+      </form>
     </dialog>
   </body>
 </html>

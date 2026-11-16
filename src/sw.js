@@ -10,12 +10,17 @@ const HASHED_ASSET = /-[a-f0-9]{12}\.(js|css|woff2|txt)$/;
 
 /** CDN の更新途中や壊れた保存内容を、新版のキャッシュへ混入させない。 */
 async function verify(response, expected) {
-  if (!response.ok) throw new Error('アプリの取得に失敗しました。');
+  if (!response.ok) throw new Error('取得に失敗しました。');
   const buffer = await crypto.subtle.digest('SHA-256', await response.clone().arrayBuffer());
   // Base64 化するのは日本語本文ではなく、SHA-256 の固定長 32 バイトだけ。
   const hash = btoa(String.fromCharCode(...new Uint8Array(buffer)));
   if (hash !== expected) throw new Error('アプリの版が揃っていません。');
   return response;
+}
+
+/** 取得方法だけを切り替え、どの HTTP キャッシュ経路でも同じ整合性検査を行う。 */
+async function fetchVerified(url, expected, options) {
+  return verify(await fetch(new Request(url, options)), expected);
 }
 
 /** 初回表示の HTTP キャッシュを再利用し、古い内容の場合だけ取り直す。 */
@@ -25,19 +30,18 @@ async function download(url, expected) {
   if (html) {
     for (const candidate of [BASE.href, url]) {
       try {
-        return await verify(await fetch(new Request(candidate, { cache: 'only-if-cached', mode: 'same-origin' })), expected);
+        return await fetchVerified(candidate, expected, { cache: 'only-if-cached', mode: 'same-origin' });
       } catch {
         // 未保存や旧版なら次の候補を調べ、最後に最新版を取得する。
       }
     }
-    return verify(await fetch(new Request(BASE.href, { cache: 'reload' })), expected);
+    return fetchVerified(BASE.href, expected, { cache: 'reload' });
   }
-  const address = url;
-  const response = await fetch(new Request(address, { cache: 'force-cache' }));
+  const response = await fetch(new Request(url, { cache: 'force-cache' }));
   try {
     return await verify(response, expected);
   } catch {
-    return verify(await fetch(new Request(address, { cache: 'reload' })), expected);
+    return fetchVerified(url, expected, { cache: 'reload' });
   }
 }
 

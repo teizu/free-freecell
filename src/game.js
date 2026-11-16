@@ -15,10 +15,14 @@ export const SUITS = [
 export const TABLEAU = 'tableau';
 export const HOME = 'foundations';
 export const CELLS = 'cells';
+// 通常移動と簡易移動で、同じ空セルには同じ案内を返す。
+const EMPTY_CELL = '空のフリーセルは移動不可。';
 
 export const rank = (card) => card % 13 + 1;
 const suit = (card) => Math.floor(card / 13);
-const isCard = (card) => Number.isInteger(card) && card >= 0 && card < 52;
+// カード番号・セル位置・履歴位置は、同じ半開区間の整数として検証する。
+const inRange = (value, length) => Number.isInteger(value) && value >= 0 && value < length;
+const isCard = (card) => inRange(card, 52);
 const sameCards = (left, right) => left.length === right.length && left.every((card, index) => card === right[index]);
 
 /** 読み上げと操作の案内に使う、日本語のカード名を作る。 */
@@ -63,7 +67,7 @@ function canStack(card, below) {
 function validLocation(location) {
   if (!location || ![TABLEAU, CELLS, HOME].includes(location.zone)) return false;
   const count = location.zone === TABLEAU ? 8 : 4;
-  return Number.isInteger(location.index) && location.index >= 0 && location.index < count;
+  return inRange(location.index, count);
 }
 
 /** 盤面の合法手を適用する。空の移動先と、移動後に空く元列は補助列に数えない。 */
@@ -77,7 +81,7 @@ function moveBoard(board, from, to) {
   let cards;
   if (from.zone === TABLEAU) {
     const source = tableau[from.index];
-    if (!Number.isInteger(from.offset) || from.offset < 0 || from.offset >= source.length) {
+    if (!inRange(from.offset, source.length)) {
       return fail('移動する札を選択。');
     }
     cards = source.slice(from.offset);
@@ -86,7 +90,7 @@ function moveBoard(board, from, to) {
     }
   } else {
     const card = cells[from.index];
-    if (card === null) return fail('空のフリーセルは移動不可。');
+    if (card === null) return fail(EMPTY_CELL);
     cards = [card];
   }
 
@@ -138,7 +142,7 @@ export function quickMove(game, from) {
   const pile = from.zone === TABLEAU ? board.tableau[from.index] : null;
   if (pile && (!pile.length || from.offset !== pile.length - 1)) return fail('列の末尾の札だけ移動可。');
   const card = pile ? pile.at(-1) : board.cells[from.index];
-  if (card === null) return fail('空のフリーセルは移動不可。');
+  if (card === null) return fail(EMPTY_CELL);
   const home = move(game, from, { zone: HOME, index: suit(card) });
   if (!home.error) return home;
   if (from.zone === CELLS) return fail('この札はホームへ移動不可。');
@@ -204,7 +208,7 @@ function validBoard(board) {
     || !Array.isArray(cells) || cells.length !== 4
     || !Array.isArray(foundations) || foundations.length !== 4) return false;
   if (!tableau.every(Array.isArray) || !foundations.every(Array.isArray)) return false;
-  if (!cells.every((card) => card === null || isCard(card))) return false;
+  // 空のフリーセルだけ除き、どの場所の札も以下でまとめて検証する。
   const cards = [...tableau.flat(), ...cells.filter((card) => card !== null), ...foundations.flat()];
   if (cards.length !== 52 || !cards.every(isCard) || new Set(cards).size !== 52) return false;
   return foundations.every((pile, suitIndex) => pile.length <= 13
@@ -213,11 +217,10 @@ function validBoard(board) {
 
 /** 履歴比較と移動候補の列挙用に、フリーセルも通常のカード配列へそろえる。 */
 function piles(board) {
-  return [
-    ...board.tableau.map((cards, index) => ({ zone: TABLEAU, index, cards })),
-    ...board.cells.map((card, index) => ({ zone: CELLS, index, cards: card === null ? [] : [card] })),
-    ...board.foundations.map((cards, index) => ({ zone: HOME, index, cards })),
-  ];
+  // 保存オブジェクトのキー順に依存せず、前後の盤面を同じ順番で比較する。
+  return [TABLEAU, CELLS, HOME].flatMap(zone => board[zone].map((value, index) => ({
+    zone, index, cards: zone === CELLS ? value === null ? [] : [value] : value,
+  })));
 }
 
 /** 隣接する履歴の差から 1 回の移動を復元し、実際のルールで再検証する。 */
@@ -239,7 +242,7 @@ export function validateGame(game) {
   if (!game) return false;
   const { history, cursor, elapsedMs, started, actions, id, recorded, result } = game;
   if (game.version !== 1 || !Array.isArray(history) || history.length === 0
-    || !Number.isInteger(cursor) || cursor < 0 || cursor >= history.length
+    || !inRange(cursor, history.length)
     || typeof started !== 'boolean' || !Number.isFinite(elapsedMs)
     || elapsedMs < 0 || elapsedMs > Number.MAX_SAFE_INTEGER) return false;
   if (started !== (history.length > 1) || (!started && elapsedMs !== 0)) return false;

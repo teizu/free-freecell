@@ -26,10 +26,13 @@ export function loadRecords(key, storage = () => localStorage) {
   }
 }
 
-/** 直前の保存を読み直し、同じ試行は一度だけ登録する。同値は先に達成した局を優先する。 */
+/**
+ * 直前の保存を読み直し、同じ試行は一度だけ登録する。同値は先に達成した局を優先する。
+ * updated は時間・手数それぞれの新規ランク入りを示し、保存が成功した場合だけ通知する。
+ */
 export function saveRecord(key, entry, storage = () => localStorage) {
   const { records, error } = loadRecords(key, storage);
-  if (error) return error;
+  if (error) return { error, updated: [false, false] };
   const next = ['time', 'moves'].map((field, index) => {
     const list = records[index];
     return (list.some(item => item.id === entry.id) ? list : [...list, entry])
@@ -37,8 +40,9 @@ export function saveRecord(key, entry, storage = () => localStorage) {
   });
   try {
     storage().setItem(key, JSON.stringify(next));
-    return '';
+    return { error: '', updated: next.map((list, index) =>
+      list.some(item => item.id === entry.id) && !records[index].some(item => item.id === entry.id)) };
   } catch {
-    return '成績を保存できません。この画面で再試行できます。';
+    return { error: '成績を保存できません。この画面で再試行できます。', updated: [false, false] };
   }
 }

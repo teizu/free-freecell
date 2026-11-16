@@ -2,6 +2,7 @@
  * 音声ファイルを使わない効果音と、クリア後のキングの演出。
  * ゲーム状態や履歴は変更せず、非表示・動きを減らす設定では演出を止める。
  */
+import { listen, attribute } from './dom.js';
 import { TABLEAU, HOME, CELLS } from './game.js';
 
 /** 音声設定と勝利演出を準備し、画面側からの開始・停止要求を受け付ける。 */
@@ -17,7 +18,7 @@ export function setupEffects(board, button, key) {
   /** 記号と文言の両方で現在の音声状態を示し、読み上げにも有効・無効を伝える。 */
   function label() {
     button.firstElementChild.textContent = enabled ? ' 音声オン' : ' 音声オフ';
-    button.setAttribute('aria-pressed', String(enabled));
+    attribute(button, 'aria-pressed', enabled);
   }
 
   /** 重ね鳴らしを避け、ミュートと画面非表示でも発音を確実に止める。 */
@@ -81,6 +82,8 @@ export function setupEffects(board, button, key) {
     for (const item of winners) {
       clearTimeout(item.timer);
       item.animation?.cancel();
+      // 静止中の待機も解放し、呼び出し元が演出完了を待ち続けないようにする。
+      item.resume?.();
       // Q・J は表示上の演出だけ。中断時は保存状態にかかわらず元の K へ戻す。
       item.face.textContent = item.king;
     }
@@ -92,6 +95,7 @@ export function setupEffects(board, button, key) {
     won = value;
     stopWin();
     if (!won || document.hidden || motion.matches) return;
+    const celebrations = [];
     for (const card of board.querySelectorAll('.foundations .card')) {
       const face = card.firstElementChild;
       const item = { face, king: face.textContent };
@@ -121,39 +125,44 @@ export function setupEffects(board, button, key) {
             if (!winners.includes(item)) return;
             face.textContent = String.fromCodePoint(item.king.codePointAt(0) + offset);
           }
-          if (offset) await new Promise(resolve => { item.timer = setTimeout(resolve, 100); });
+          if (offset) await new Promise(resolve => {
+            item.resume = resolve;
+            item.timer = setTimeout(resolve, 100);
+          });
           if (!winners.includes(item)) return;
         }
         schedule();
       }
-      if (celebrate) salute();
+      if (celebrate) celebrations.push(salute());
       else schedule();
     }
+    // ランキングの祝福は全スートが K に戻るまで待つ。通常の独立回転は待たない。
+    return Promise.all(celebrations);
   }
 
   label();
-  button.addEventListener('click', (event) => {
+  listen(button, 'click', (event) => {
     enabled = !enabled;
     silence();
     label();
     try { localStorage.setItem(key, enabled ? '1' : '0'); } catch { /* この画面内の選択は保持する。 */ }
     if (enabled) unlock(event);
   });
-  for (const type of ['pointerdown', 'keydown']) document.addEventListener(type, unlock, true);
+  for (const type of ['pointerdown', 'keydown']) listen(document, type, unlock, true);
   // 移動処理後に通知を受け、既に移動音が鳴っていればクリック音で上書きしない。
   // ドラッグ後の疑似 click はドラッグ側で除外される。
   // disabled の実 click はブラウザーが止める。操作後に disabled になった Undo は鳴らす。
-  document.addEventListener('click', (event) => {
+  listen(document, 'click', (event) => {
     const target = event.target.closest('button, input, summary');
     if (event.isTrusted && !voice && target && target !== button) play();
   });
-  document.addEventListener('visibilitychange', () => {
+  listen(document, 'visibilitychange', () => {
     if (document.hidden) silence();
     win(won);
   });
-  motion.addEventListener('change', () => win(won));
-  window.addEventListener('pagehide', () => { silence(); stopWin(); });
-  window.addEventListener('pageshow', () => win(won));
+  listen(motion, 'change', () => win(won));
+  listen(window, 'pagehide', () => { silence(); stopWin(); });
+  listen(window, 'pageshow', () => win(won));
   // クリア音はホーム移動を確定した呼び出し元だけが指定し、復元・再描画では鳴らさない。
   return {
     /** 成功した移動先を音へ変換し、クリックとドラッグで同じ音を鳴らす。 */

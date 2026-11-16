@@ -14,24 +14,25 @@ export function loadGame(key, storageFactory = () => globalThis.localStorage) {
   }
 }
 
-/** 保存の失敗を短い案内として返す。容量超過や設定による拒否を外へ投げない。 */
-export function saveGame(key, game, storageFactory = () => globalThis.localStorage) {
+/** 進行と更新用の控えを同じ方法で書き込み、Storage の拒否を呼び出し元へ返す。 */
+function writeJSON(key, value, storageFactory) {
   try {
-    storageFactory().setItem(key, JSON.stringify(game));
-    return null;
-  } catch {
-    return '保存不可。この画面では遊べますが、閉じると進行を失う場合があります。';
-  }
-}
-
-/** 更新時だけタブ固有の控えを作り、別タブの永続保存による上書きから進行を守る。 */
-export function saveReload(key, game, automatic, storageFactory = () => globalThis.sessionStorage) {
-  try {
-    storageFactory().setItem(key, JSON.stringify({ game, automatic }));
+    storageFactory().setItem(key, JSON.stringify(value));
     return true;
   } catch {
     return false;
   }
+}
+
+/** 保存の失敗を短い案内として返す。容量超過や設定による拒否を外へ投げない。 */
+export function saveGame(key, game, storageFactory = () => globalThis.localStorage) {
+  return writeJSON(key, game, storageFactory) ? null
+    : '保存不可。この画面では遊べますが、閉じると進行を失う場合があります。';
+}
+
+/** 更新時だけタブ固有の控えを作り、別タブの永続保存による上書きから進行を守る。 */
+export function saveReload(key, game, automatic, storageFactory = () => globalThis.sessionStorage) {
+  return writeJSON(key, { game, automatic }, storageFactory);
 }
 
 /** 更新用の控えは一度だけ消費し、破損や保存拒否なら通常の永続保存へ戻る。 */

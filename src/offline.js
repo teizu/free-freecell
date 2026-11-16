@@ -1,4 +1,6 @@
 /** オフライン準備とクリック更新を扱う。進行の保存は画面側のコールバックへ任せる。 */
+import { listen } from './dom.js';
+
 const PUBLISHED = '__FREECELL_BUILD__' === 'published';
 // 同じ失敗理由は共有し、どの更新経路でも同じ案内にする。
 const SAVE_ERROR = '保存できず更新を中止。この画面では続けられます。';
@@ -66,18 +68,18 @@ export async function setupOffline(onStatus, button, prepareUpdate) {
         if (worker?.state === 'activated' && update) changed = true;
         report(worker);
       }
-      if (worker) worker.addEventListener('statechange', reportState);
+      if (worker) listen(worker, 'statechange', reportState);
       reportState();
     }
-    registration.addEventListener('updatefound', () => observe(registration.installing));
+    listen(registration, 'updatefound', () => observe(registration.installing));
     /** 他タブでの適用は案内だけにし、自分が要求した更新だけを再読み込みへ進める。 */
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
+    listen(navigator.serviceWorker, 'controllerchange', () => {
       changed ||= initialController !== null;
       if (requested) reload();
       else report();
     });
     /** 保存確認後に一度だけ待機解除を要求し、適用できない場合は操作可能な状態へ戻す。 */
-    button.addEventListener('click', () => {
+    listen(button, 'click', () => {
       if (requested) return;
       if (!prepareUpdate(false)) {
         failed(SAVE_ERROR);
@@ -92,7 +94,7 @@ export async function setupOffline(onStatus, button, prepareUpdate) {
       }
       waitingFor = waiting;
       // 強制再読込などで SW の制御外にいるタブも、worker 自身の適用完了を待てる。
-      waiting.addEventListener('statechange', () => {
+      listen(waiting, 'statechange', () => {
         if (waitingFor !== waiting) return;
         if (waiting.state === 'activated') reload();
         else if (waiting.state === 'redundant') failed(UPDATE_ERROR);
