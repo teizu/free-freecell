@@ -78,6 +78,14 @@ npm run check:size
 表示日付はアプリに関係する最新 Git コミットから生成します。`SOURCE_DATE_EPOCH` の指定時はその UNIX 秒を優先し、Git がない場合はソースの最新更新日時を使います。再現方法は [実装方針](docs/architecture.md#表示する更新日) を参照してください。
 esbuild と html-minifier-terser は開発依存として固定版を指定し、`package-lock.json` を管理します。依存の変更がなければ、毎回の `npm ci` は不要です。
 
+ビルド後の実ブラウザー検証は次の3本です。Chromiumの場所が既定と異なる場合は、`CHROMIUM_BIN` に実行ファイルのパスを指定します。
+
+```sh
+npm run test:browser
+node scripts/records-browser-check.mjs
+node scripts/seed-browser-check.mjs
+```
+
 ## 構成
 
 ```text
