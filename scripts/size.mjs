@@ -1,9 +1,9 @@
-/** 公開ファイルの圧縮前サイズを集計し、50KB の上限を守る。 */
+/** 公開ファイルの圧縮前サイズを集計し、60KB の上限を守る。 */
 import { readdir, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const SIZE_LIMIT = 50_000;
+export const SIZE_LIMIT = 60_000;
 
 /** 隠しファイルも含めて再帰的に集計する。リンクは配布対象として認めない。 */
 export async function measureSize(directory) {

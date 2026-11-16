@@ -3,6 +3,7 @@
  * DOM・時計・保存には依存せず、成功した操作だけで新しい状態を返す。
  */
 import { validRecord } from './records.js';
+import { randomSeed, seededRandom, validSeed } from './seed.js';
 
 export const SUITS = [
   { symbol: '♠', name: 'スペード', color: 'black' },
@@ -32,8 +33,9 @@ export function cardLabel(card) {
   return `${SUITS[suit(card)].name}の${name}`;
 }
 
-/** Fisher–Yates 法でシャッフルし、左から順に 8 列へ配る。 */
-export function createGame(random = Math.random) {
+/** シードに対応する Fisher–Yates 法の配りを作り、左から順に 8 列へ配る。 */
+export function createGame(seed = randomSeed()) {
+  const random = seededRandom(seed);
   const deck = Array.from({ length: 52 }, (_, card) => card);
   for (let index = deck.length - 1; index > 0; index -= 1) {
     const other = Math.floor(random() * (index + 1));
@@ -45,7 +47,7 @@ export function createGame(random = Math.random) {
     foundations: Array.from({ length: 4 }, () => []),
   };
   deck.forEach((card, index) => board.tableau[index % 8].push(card));
-  return initialGame(board);
+  return initialGame(board, seed);
 }
 
 export const getBoard = (game) => game.history[game.cursor];
@@ -54,8 +56,11 @@ export const getActions = (game) => game.actions ?? game.history.length - 1;
 export const isWon = (board) => board.foundations.length === 4 && board.foundations.every((pile) => pile.length === 13);
 
 /** 配りが同じ再挑戦も別の局として識別し、成績と累積操作数を初期化する。 */
-function initialGame(board) {
-  return { version: 1, history: [board], cursor: 0, elapsedMs: 0, started: false, id: crypto.randomUUID(), actions: 0 };
+function initialGame(board, seed) {
+  const game = { version: 1, history: [board], cursor: 0, elapsedMs: 0, started: false, id: crypto.randomUUID(), actions: 0 };
+  // 旧局の配りから番号を推測しない。旧局をリセットしてもシードなしのまま保存する。
+  if (seed !== undefined) game.seed = seed;
+  return game;
 }
 
 /** 下側のカードが交互色で 1 段小さければ、場札として重ねられる。 */
@@ -197,7 +202,7 @@ export function redo(game) {
 
 /** 同じ初期配列に戻し、手数・経過時間・開始状態を初期化する。 */
 export function restart(game) {
-  return initialGame(game.history[0]);
+  return initialGame(game.history[0], game.seed);
 }
 
 /** 保存された盤面の構造、52 枚の一意性、ホームセルの順序を確認する。 */
@@ -240,7 +245,7 @@ function validTransition(before, after) {
 /** JSON 復元時に、開始配列と全履歴が同じゲームとして成立するか確認する。 */
 export function validateGame(game) {
   if (!game) return false;
-  const { history, cursor, elapsedMs, started, actions, id, recorded, result } = game;
+  const { history, cursor, elapsedMs, started, actions, id, recorded, result, seed } = game;
   if (game.version !== 1 || !Array.isArray(history) || history.length === 0
     || !inRange(cursor, history.length)
     || typeof started !== 'boolean' || !Number.isFinite(elapsedMs)
@@ -253,8 +258,11 @@ export function validateGame(game) {
     || !/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/.test(id)
     || actions === undefined)) return false;
   if (recorded !== undefined && typeof recorded !== 'boolean') return false;
+  if (seed !== undefined && !validSeed(seed)) return false;
   // 保存再試行用の初回成績は Undo 後も保つが、他の局の成績や破損値は復元しない。
   if (result !== undefined && (!validRecord(result) || result.id !== id)) return false;
+  // 過去の成績に番号がなければ読み込めるが、数値がある場合は対局の番号と一致させる。
+  if (result && validSeed(result.seed) && result.seed !== seed) return false;
   if (!history.every(validBoard)) return false;
   const initial = history[0];
   if (initial.cells.some((card) => card !== null) || initial.foundations.some((pile) => pile.length)

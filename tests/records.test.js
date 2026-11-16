@@ -1,7 +1,7 @@
 /** 独立した上位 3 件、達成日、重複防止と保存失敗を実際の保存形式で検証する。 */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { formatTime, loadRecords, saveRecord } from '../src/records.js';
+import { formatTime, loadRecords, saveRecord, validRecord } from '../src/records.js';
 
 /** 別アプリの値を含む Storage を用意する。 */
 function storage() {
@@ -10,9 +10,9 @@ function storage() {
 }
 
 /** 異なる試行の記録を、順序と同値の比較を確認できる日時で作る。 */
-function result(index, time, moves) {
+function result(index, time, moves, seed = '') {
   return { id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
-    date: `2026-11-${String(index).padStart(2, '0')}T12:34:56.000Z`, time, moves };
+    date: `2026-11-${String(index).padStart(2, '0')}T12:34:56.000Z`, time, moves, seed };
 }
 
 test('時間と手数を別々に上位3件保存し、同値では先の達成日を優先する', () => {
@@ -92,7 +92,7 @@ test('初記録は両方を更新し、満員の順位表では時間のみ・�
 
 test('保存失敗では更新を通知せず、元の成績を保持して成功した再試行だけ通知する', () => {
   const saved = storage();
-  const entry = result(1, 60, 60);
+  const entry = result(1, 60, 60, 4294967295);
   const write = saved.setItem;
   saved.setItem = () => { throw new Error('quota'); };
   const failed = saveRecord('records', entry, () => saved);
@@ -102,6 +102,49 @@ test('保存失敗では更新を通知せず、元の成績を保持して成�
   saved.setItem = write;
   assert.deepEqual(saveRecord('records', entry, () => saved), { error: '', updated: [true, true] });
   assert.deepEqual(loadRecords('records', () => saved).records, [[entry], [entry]]);
+});
+
+test('旧成績のシードは空欄で読み込み、0と最大値を区別して順位へ保存する', () => {
+  const saved = storage();
+  const old = result(1, 100, 90);
+  delete old.seed;
+  const raw = JSON.stringify([[old], [old]]);
+  saved.setItem('records', raw);
+  assert.deepEqual(loadRecords('records', () => saved).records, [[{ ...old, seed: '' }], [{ ...old, seed: '' }]]);
+  assert.equal(saved.getItem('records'), raw, '表示だけでは過去の成績を書き換えない');
+  const zero = result(2, 50, 80, 0);
+  const maximum = result(3, 60, 70, 4294967295);
+  saveRecord('records', zero, () => saved);
+  saveRecord('records', maximum, () => saved);
+  const { records } = loadRecords('records', () => saved);
+  assert.deepEqual(records[0].map(entry => entry.seed), [0, 4294967295, '']);
+  assert.deepEqual(records[1].map(entry => entry.seed), [4294967295, 0, '']);
+  assert.deepEqual(JSON.parse(saved.getItem('records')), records);
+});
+
+test('同じシードの別試行も記録し、同じ試行のシードを再登録で変更しない', () => {
+  const saved = storage();
+  const first = result(1, 60, 60, 123);
+  const second = result(2, 70, 55, 123);
+  saveRecord('records', first, () => saved);
+  saveRecord('records', second, () => saved);
+  assert.deepEqual(saveRecord('records', { ...first, seed: 456 }, () => saved),
+    { error: '', updated: [false, false] });
+  assert.deepEqual(loadRecords('records', () => saved).records, [[first, second], [second, first]]);
+});
+
+test('成績の不正なシードを拒否し、未知値の空欄と0を有効として扱う', () => {
+  const saved = storage();
+  for (const seed of ['', 0, 4294967295]) assert.equal(Boolean(validRecord(result(1, 60, 60, seed))), true);
+  for (const seed of [null, -1, 4294967296, 1.5, '0', {}, true]) {
+    const entry = result(1, 60, 60, seed);
+    assert.equal(Boolean(validRecord(entry)), false);
+    const raw = JSON.stringify([[entry], []]);
+    saved.setItem('records', raw);
+    assert.ok(loadRecords('records', () => saved).error);
+    assert.ok(saveRecord('records', result(2, 50, 50, 1), () => saved).error);
+    assert.equal(saved.getItem('records'), raw);
+  }
 });
 
 test('時間は 0 秒・分境界・1 時間以上を同じ表記で表示する', () => {

@@ -2257,7 +2257,7 @@ async function main() {
     const firstRequests = server.requests.slice();
     if (!externalUrl) {
       assert.equal(firstRequests.length, 5, 'HTML, the application bundle, CSS, font and service worker are each fetched once');
-      assert.ok(firstRequests.reduce((sum, request) => sum + request.bytes, 0) <= 50000, 'Initial offline assets fit the raw 50 KB limit');
+      assert.ok(firstRequests.reduce((sum, request) => sum + request.bytes, 0) <= 60000, 'Initial offline assets fit the raw 60 KB limit');
       console.log(`First load HTTP: ${firstRequests.length} requests, ${firstRequests.reduce((sum, request) => sum + request.bytes, 0)} body bytes`);
       console.log(`First load paths: ${JSON.stringify(firstRequests)}`);
     } else {

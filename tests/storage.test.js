@@ -17,7 +17,7 @@ test('履歴と時間を保存・復元し、指定されたキー以外を変�
   const storage = memoryStorage();
   const key = 'freecell:/free-freecell/:v1';
   assert.deepEqual(loadGame(key, () => storage), { game: null, error: null });
-  let game = createGame(() => 0.5);
+  let game = createGame(123);
   game = move(game, { zone: 'tableau', index: 0, offset: 6 }, { zone: 'cells', index: 0 }).game;
   game.elapsedMs = 1234.5;
   assert.equal(saveGame(key, game, () => storage), null);
@@ -27,7 +27,7 @@ test('履歴と時間を保存・復元し、指定されたキー以外を変�
 });
 
 test('壊れた JSON・未対応形式・重複札を復元せず、元の保存値は保持する', () => {
-  const game = createGame(() => 0.5);
+  const game = createGame(123);
   game.history[0].tableau[0][0] = game.history[0].tableau[0][1];
   for (const saved of ['{', 'null', '{"version":2}', JSON.stringify(game)]) {
     const storage = memoryStorage();
@@ -56,10 +56,10 @@ test('Storage アクセス拒否・容量超過を例外として外へ漏らさ
 test('更新直前の進行と自動設定をタブごとに保存し、一度だけ復元する', () => {
   const key = 'freecell:/free-freecell/:v1:reload';
   const tabs = [memoryStorage(), memoryStorage()];
-  let game = createGame(() => 0.5);
+  let game = createGame(123);
   game = move(game, { zone: 'tableau', index: 0, offset: 6 }, { zone: 'cells', index: 0 }).game;
   game = { ...game, cursor: 0, elapsedMs: 1234.5 };
-  const otherGame = createGame(() => 0.25);
+  const otherGame = createGame(456);
   const snapshot = JSON.stringify(game);
   assert.equal(saveReload(key, game, true, () => tabs[0]), true);
   assert.equal(saveReload(key, otherGame, false, () => tabs[1]), true);
@@ -75,7 +75,7 @@ test('更新直前の進行と自動設定をタブごとに保存し、一度�
 });
 
 test('更新用データの破損・不正な自動設定は一度で破棄し、ゲームへ取り込まない', () => {
-  const game = createGame(() => 0.5);
+  const game = createGame(123);
   const damaged = structuredClone(game);
   damaged.history[0].tableau[0][0] = damaged.history[0].tableau[0][1];
   const values = ['{', 'null', '{}', JSON.stringify({ game, automatic: 'true' }),

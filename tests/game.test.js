@@ -46,14 +46,76 @@ function illegal(game, source, target) {
 }
 
 test('配札は 52 枚を 7,7,7,7,6,6,6,6 枚に分け、初期状態を復元できる', () => {
-  for (const random of [() => 0, () => 0.5, () => 0.9999, Math.random]) {
-    const game = createGame(random);
+  for (const seed of [0, 1, 123, 0xffffffff]) {
+    const game = createGame(seed);
     const board = getBoard(game);
     assert.deepEqual(board.tableau.map((pile) => pile.length), [7, 7, 7, 7, 6, 6, 6, 6]);
     assert.equal(new Set(board.tableau.flat()).size, 52);
     assert.deepEqual(board.cells, [null, null, null, null]);
     assert.equal(validateGame(clone(game)), true);
     assert.equal(isWon(board), false);
+  }
+});
+
+test('同じシードは固定の初期配置を再現し、対局の識別子だけを新しくする', () => {
+  const examples = [
+    [0, [[43, 6, 33, 49, 40, 4, 7], [50, 41, 5, 14, 19, 10, 11], [38, 12, 37, 39, 21, 24, 0],
+      [1, 35, 32, 47, 44, 20, 13], [51, 34, 26, 2, 42, 29], [30, 18, 16, 9, 27, 28],
+      [31, 3, 45, 46, 15, 25], [23, 17, 8, 48, 36, 22]]],
+    [0xffffffff, [[33, 48, 30, 6, 12, 7, 51], [1, 22, 41, 39, 4, 36, 35], [45, 15, 8, 2, 3, 42, 9],
+      [14, 19, 44, 34, 32, 5, 46], [16, 17, 43, 24, 27, 21], [49, 26, 10, 23, 18, 31],
+      [20, 50, 0, 38, 28, 25], [11, 37, 47, 29, 13, 40]]],
+  ];
+  for (const [seed, tableau] of examples) {
+    const first = createGame(seed);
+    const second = createGame(seed);
+    assert.equal(first.seed, seed);
+    assert.equal(second.seed, seed);
+    assert.deepEqual(getBoard(first).tableau, tableau);
+    assert.deepEqual(getBoard(second), getBoard(first));
+    assert.notEqual(first.id, second.id);
+    assert.deepEqual({ ...second, id: first.id }, first);
+  }
+  assert.notDeepEqual(getBoard(createGame(0)), getBoard(createGame(1)));
+});
+
+test('通常ゲームも表示するシードを先に決め、同じ番号の明示配札で再現できる', (context) => {
+  for (const seed of [0, 0xffffffff]) {
+    const mocked = context.mock.method(crypto, 'getRandomValues', (values) => {
+      values[0] = seed;
+      return values;
+    });
+    const generated = createGame();
+    assert.equal(generated.seed, seed);
+    const explicit = createGame(generated.seed);
+    assert.deepEqual(getBoard(generated), getBoard(explicit));
+    assert.equal(mocked.mock.callCount(), 1, '番号指定時は端末の乱数を読まない');
+    mocked.mock.restore();
+  }
+  for (const seed of [-1, .5, 0x100000000, NaN, Infinity, '123', null, () => .5]) {
+    assert.throws(() => createGame(seed), RangeError);
+  }
+});
+
+test('シードは移動・Undo・Redo・リセットで保ち、旧保存には番号を推測して付けない', () => {
+  const initial = createGame(0);
+  const first = legal(initial, from(0, 6), to('cells', 0));
+  const restored = clone(first);
+  for (const next of [restored, undo(first), redo(undo(first)), restart(first)]) {
+    assert.equal(next.seed, 0);
+    assert.equal(validateGame(next), true);
+  }
+  const restarted = restart(first);
+  assert.deepEqual(restarted.history[0], initial.history[0]);
+  assert.notEqual(restarted.id, initial.id);
+  const legacy = clone(first);
+  delete legacy.seed;
+  assert.equal(validateGame(legacy), true);
+  const oldRestart = restart(legacy);
+  assert.equal(Object.hasOwn(oldRestart, 'seed'), false);
+  assert.equal(validateGame(oldRestart), true);
+  for (const seed of [null, '', '0', -1, .5, 0x100000000, NaN, Infinity]) {
+    assert.equal(validateGame({ ...first, seed }), false);
   }
 });
 
@@ -84,7 +146,7 @@ test('空列に K 以外も置け、フリーセル同士も 1 枚なら移せ�
 });
 
 test('同じ場所、存在しない場所、場札の範囲外を拒否する', () => {
-  const game = createGame(() => 0.5);
+  const game = createGame(123);
   illegal(game, from(0), to('tableau', 0));
   illegal(game, from(8), to('cells', 0));
   illegal(game, from(0, -1), to('cells', 0));
@@ -280,7 +342,7 @@ test('補助枠なしでは 1 枚だけ許可し、元列が空になる分を�
 });
 
 test('Undo/Redo は盤面を戻しても累積手数を増やし、分岐で先の履歴を破棄する', () => {
-  const initial = createGame(() => 0.5);
+  const initial = createGame(123);
   assert.equal(getActions(initial), 0);
   assert.equal(undo(initial), initial);
   assert.equal(redo(initial), initial);
@@ -374,7 +436,7 @@ test('成功した操作だけ数え、複数枚移動は一手、保存した�
 });
 
 test('旧保存は履歴長を手数の下限とし、Undo 済みでも継続・保存できる', () => {
-  let legacy = createGame(() => 0.5);
+  let legacy = createGame(123);
   legacy = legal(legacy, from(0, 6), to('cells', 0));
   legacy = undo(legal(legacy, from(1, 6), to('cells', 1)));
   delete legacy.id;
@@ -392,7 +454,7 @@ test('旧保存は履歴長を手数の下限とし、Undo 済みでも継続・
 });
 
 test('成績の識別子・累積手数・登録状態は復元時に型と範囲を検証する', () => {
-  const initial = createGame(() => 0.5);
+  const initial = createGame(123);
   const game = legal(initial, from(0, 6), to('cells', 0));
   assert.equal(validateGame({ ...game, recorded: true }), true);
   for (const actions of [-1, 0, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, '1', null, undefined]) {
@@ -412,16 +474,19 @@ test('成績の識別子・累積手数・登録状態は復元時に型と範�
 });
 
 test('初回クリアの成績は復元と Undo／Redo で保ち、新規・リセットでは引き継がない', () => {
-  const initial = createGame(() => 0.5);
+  const initial = createGame(123);
   const deck = Array.from({ length: 52 }, (_, index) => (index % 4) * 13 + 12 - Math.floor(index / 4));
   initial.history[0].tableau = Array.from({ length: 8 }, (_, column) => deck.filter((_, index) => index % 8 === column));
   const won = autoHome(initial).game;
-  const result = { id: won.id, date: '2026-11-10T12:00:00.000Z', time: 90, moves: 52 };
+  const result = { id: won.id, date: '2026-11-10T12:00:00.000Z', time: 90, moves: 52, seed: won.seed };
   // ランキング保存が失敗しても、この結果を対局と一緒に保存して翌日再試行できる。
   const pending = { ...won, elapsedMs: 90_000, result };
   const restored = clone(pending);
   assert.equal(validateGame(restored), true);
   assert.deepEqual(restored.result, result);
+  assert.equal(validateGame({ ...restored, result: { ...result, seed: undefined } }), true);
+  assert.equal(validateGame({ ...restored, result: { ...result, seed: '' } }), true);
+  assert.equal(validateGame({ ...restored, result: { ...result, seed: 456 } }), false);
   const previous = undo(restored);
   const next = redo(previous);
   for (const game of [previous, next]) {
@@ -429,7 +494,7 @@ test('初回クリアの成績は復元と Undo／Redo で保ち、新規・リ�
     assert.deepEqual(game.result, result, '再勝利しても最初の達成日時・時間・手数を変えない');
   }
   assert.equal(getActions(next), 54);
-  for (const game of [restart({ ...next, recorded: true }), createGame(() => 0.5)]) {
+  for (const game of [restart({ ...next, recorded: true }), createGame(123)]) {
     assert.notEqual(game.id, won.id);
     assert.equal(game.actions, 0);
     assert.equal(game.result, undefined);
@@ -444,7 +509,7 @@ test('初回クリアの成績は復元と Undo／Redo で保ち、新規・リ�
 });
 
 test('自動移動を 1 枚ずつ確定しても一括と同じ履歴になり、未実行の手や元の状態を変えない', () => {
-  const initial = createGame(() => 0.5);
+  const initial = createGame(123);
   const deck = Array.from({ length: 52 }, (_, index) => (index % 4) * 13 + 12 - Math.floor(index / 4));
   initial.history[0].tableau = Array.from({ length: 8 }, (_, column) => deck.filter((_, index) => index % 8 === column));
   const original = clone(initial);
@@ -471,7 +536,7 @@ test('自動移動を 1 枚ずつ確定しても一括と同じ履歴になり�
 });
 
 test('保存の版・位置・時計・開始状態・初期配置の破損を拒否する', () => {
-  const game = createGame(() => 0.5);
+  const game = createGame(123);
   for (const change of [
     (value) => { value.version = 2; },
     (value) => { value.cursor = -1; },
@@ -494,7 +559,7 @@ test('保存の版・位置・時計・開始状態・初期配置の破損を�
 });
 
 test('枚数が正しくても、履歴の飛び・札の並べ替え・開始状態の偽装を拒否する', () => {
-  const initial = createGame(() => 0.5);
+  const initial = createGame(123);
   const first = legal(initial, from(0, 6), to('cells', 0));
   const second = legal(first, from(1, 6), to('cells', 1));
   assert.equal(validateGame(second), true);
@@ -507,7 +572,7 @@ test('枚数が正しくても、履歴の飛び・札の並べ替え・開始�
 });
 
 test('52 枚が一意でも、ホームセルのスート越境や順序違いを復元しない', () => {
-  const initial = createGame(() => 0.5);
+  const initial = createGame(123);
   const corrupt = clone(initial);
   const board = corrupt.history[0];
   board.foundations[0] = Array.from({ length: 14 }, (_, card) => card);

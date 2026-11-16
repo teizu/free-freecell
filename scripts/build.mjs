@@ -6,7 +6,7 @@ import { basename, dirname, extname, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build as bundle, transformSync } from 'esbuild';
 import { minify } from 'html-minifier-terser';
-import { checkSize } from './size.mjs';
+import { checkSize, SIZE_LIMIT } from './size.mjs';
 
 const digest = (content, encoding = 'hex') => createHash('sha256').update(content).digest(encoding);
 
@@ -190,7 +190,7 @@ export async function build(source, destination) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const result = await build(process.argv[2] || 'src', process.argv[3] || 'dist');
-    console.log(`Built ${result.files.length} files: ${result.size.toLocaleString('en-US')} / 50,000 bytes (${result.version})`);
+    console.log(`Built ${result.files.length} files: ${result.size.toLocaleString('en-US')} / ${SIZE_LIMIT.toLocaleString('en-US')} bytes (${result.version})`);
   } catch (error) {
     console.error(error.message);
     process.exitCode = 1;

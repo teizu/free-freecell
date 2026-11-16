@@ -46,15 +46,15 @@ function environment(t, values) {
   }
 }
 
-test('size budget counts bytes, nested and hidden files; exactly 50,000 is allowed', async (t) => {
+test('size budget counts bytes, nested and hidden files; exactly 60,000 is allowed', async (t) => {
   const root = await workspace(t);
   await mkdir(join(root, 'nested'));
   await writeFile(join(root, 'nested', '日本語.txt'), 'あ');
-  await writeFile(join(root, '.extra'), Buffer.alloc(49_997));
-  assert.equal(await measureSize(root), 50_000);
-  assert.equal(await checkSize(root), 50_000);
+  await writeFile(join(root, '.extra'), Buffer.alloc(59_997));
+  assert.equal(await measureSize(root), 60_000);
+  assert.equal(await checkSize(root), 60_000);
   await writeFile(join(root, 'one-byte'), 'x');
-  await assert.rejects(checkSize(root), /50,001/);
+  await assert.rejects(checkSize(root), /60,001/);
 });
 
 test('size rejects symlinks so files cannot escape the measured publication', async (t) => {
@@ -313,7 +313,7 @@ test('build bundles circular ESM once and rejects missing references and oversiz
   await writeFile(join(source, 'lib/value.js'), 'import "./missing.js";');
   await assert.rejects(build(source, output), /参照先がありません/);
   await writeFile(join(source, 'lib/value.js'), 'export const value = 1;');
-  await writeFile(join(source, 'large.dat'), Buffer.alloc(50_001));
+  await writeFile(join(source, 'large.dat'), Buffer.alloc(60_001));
   await assert.rejects(build(source, output), /容量上限/);
   await assert.rejects(build(source, source), /別のフォルダ/);
 });

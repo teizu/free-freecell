@@ -16,7 +16,7 @@ let browser;
 
 /** 最終カードを置く前の局に、現在の保存形式の試行 ID・累積操作数を与える。 */
 function nearWin(seconds, actions) {
-  return { ...nearWinGame(engine), id: crypto.randomUUID(), actions, elapsedMs: seconds * 1000 };
+  return { ...nearWinGame(engine), id: crypto.randomUUID(), actions, seed: 4294967295, elapsedMs: seconds * 1000 };
 }
 
 /** ランキングダイアログを表示し、各リストを文字列として取り出す。 */
@@ -338,12 +338,16 @@ try {
           const list = document.getElementById(id); const rect = list.getBoundingClientRect();
           return { left: rect.left, right: rect.right, top: rect.top,
             overflow: list.scrollWidth > list.clientWidth,
-            // 項目数だけでなく文字の行矩形も測り、日付の折り返しを検出する。
+            // 値・日付の1行とシードの1行を分けて測り、狭い画面の折り返しを検出する。
             rows: [...list.children].map(item => {
               const box = item.getBoundingClientRect();
               const range = document.createRange();
-              range.selectNodeContents(item);
-              return { top: box.top, bottom: box.bottom, lines: new Set([...range.getClientRects()].map(rect => rect.top)).size };
+              range.selectNodeContents(item.firstElementChild);
+              const lines = new Set([...range.getClientRects()].map(rect => rect.top)).size;
+              range.selectNodeContents(item.querySelector('.record-seed'));
+              return { top: box.top, bottom: box.bottom, lines,
+                seedLines: new Set([...range.getClientRects()].map(rect => rect.top)).size,
+                seed: item.querySelector('.record-seed').textContent };
             }) };
         }) };
     })()`);
@@ -355,6 +359,10 @@ try {
       assert.ok(Math.abs(left.rows[index].top - right.rows[index].top) < 1, 'Each of the three ranking rows aligns across columns');
       assert.equal(left.rows[index].lines, 1, `Time result ${index + 1} stays on one line at ${width}px`);
       assert.equal(right.rows[index].lines, 1, `Move result ${index + 1} stays on one line at ${width}px`);
+      for (const row of [left.rows[index], right.rows[index]]) {
+        assert.equal(row.seedLines, 1, `The seed stays on its own line at ${width}px`);
+        assert.match(row.seed, /4294967295/);
+      }
     }
     const shot = await page.command('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
     await writeFile(join(temp, `ranking-${width}x${height}.png`), Buffer.from(shot.data, 'base64'));

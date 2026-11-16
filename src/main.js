@@ -9,6 +9,7 @@ import { setupOffline } from './offline.js';
 import { positionOf, setupDrag } from './drag.js';
 import { setupEffects } from './effects.js';
 import { formatTime, loadRecords, saveRecord } from './records.js';
+import { validSeed } from './seed.js';
 
 const find = (id) => document.getElementById(id);
 const boardElement = find('board');
@@ -18,6 +19,8 @@ const storageKey = `freecell:${new URL('./', location.href).pathname}:v1`;
 const reloadKey = `${storageKey}:reload`;
 const recordsKey = `${storageKey}:records`;
 const recordsDialog = find('records-dialog');
+const seedDialog = find('seed-dialog');
+const seedInput = find('seed-input');
 const resumed = takeReload(reloadKey);
 const restored = resumed ? { game: resumed.game, error: null } : loadGame(storageKey);
 let game = restored.game ?? createGame();
@@ -168,6 +171,7 @@ function recordWin() {
   // 保存を再試行しても、最初にクリアした日時・時間・手数を取り直さない。
   game = { ...game, result: game.result ?? {
     id: game.id, date: new Date().toISOString(), time: Math.floor(game.elapsedMs / 1000), moves: getActions(game),
+    seed: game.seed ?? '',
   } };
   const { error, updated } = saveRecord(recordsKey, game.result);
   recordError = error;
@@ -187,7 +191,12 @@ function showRecords() {
     list.replaceChildren();
     for (const entry of entries) {
       const item = element('li');
-      item.textContent = `${index ? `${entry.moves}手` : formatTime(entry.time)} · ${new Date(entry.date).toLocaleDateString('ja-JP')}`;
+      const result = element('span');
+      result.textContent = `${index ? `${entry.moves}手` : formatTime(entry.time)} · ${new Date(entry.date).toLocaleDateString('ja-JP')}`;
+      const seed = element('span');
+      seed.className = 'record-seed';
+      seed.textContent = entry.seed === '' ? '' : `シード ${entry.seed}`;
+      item.append(result, seed);
       list.append(item);
     }
     if (!entries.length) list.textContent = '記録はありません';
@@ -314,6 +323,7 @@ function render() {
   });
   boardElement.replaceChildren(topGroup(board, CELLS, 'フリーセル'), topGroup(board, HOME, 'ホームセル'), tableau);
   find('moves').textContent = getActions(game);
+  find('seed').textContent = game.seed ?? '';
   find('progress').textContent = board.foundations.reduce((sum, pile) => sum + pile.length, 0);
   find('undo').disabled = game.cursor === 0;
   find('redo').disabled = game.cursor + 1 === game.history.length;
@@ -477,7 +487,7 @@ async function confirmReplacement(restarting) {
 }
 
 /** 再配札と同じ配りでの再開を、共通の確認と初期化で扱う。 */
-async function replaceGame(restarting) {
+async function replaceGame(restarting, seed) {
   // dialog.close のイベント処理が終わるまでは、次の確認を重ねて開かない。
   if (replacementPending) return;
   replacementPending = true;
@@ -485,13 +495,40 @@ async function replaceGame(restarting) {
     if (!await confirmReplacement(restarting)) return;
     runningSince = null;
     recordError = '';
-    game = restarting ? restart(game) : createGame();
+    game = restarting ? restart(game) : createGame(seed);
     finishMove(restarting ? '同じ配りで再開。' : '新規ゲーム開始。');
     // 新しい配りの確定時だけ鳴らし、確認の取り消し・リセット・保存局の復元とは区別する。
     if (!restarting) effects.start();
   } finally {
     replacementPending = false;
   }
+}
+
+/** 入力だけでは配りを変えず、確定したシードを既存の新規ゲーム確認へ渡す。 */
+function showSeedInput() {
+  if (replacementPending) return;
+  cancelAutomatic();
+  cancelDrag();
+  seedInput.value = game.seed ?? '';
+  find('seed-error').textContent = '';
+  seedDialog.returnValue = '';
+  seedDialog.showModal();
+  seedInput.select();
+  effects.win(false);
+}
+
+/** 全角数字と前後空白は正規化するが、小数・指数表記・符号はシードとして受け付けない。 */
+function submitSeed(event) {
+  event.preventDefault();
+  const text = seedInput.value.trim().normalize('NFKC');
+  const seed = /^[0-9]+$/.test(text) ? Number(text) : NaN;
+  if (!validSeed(seed)) {
+    find('seed-error').textContent = '0〜4294967295の整数を入力してください。';
+    seedInput.focus();
+    return;
+  }
+  // close イベントから新規ゲームへ進めるので、モーダルを重ねたり二重送信したりしない。
+  seedDialog.close(String(seed));
 }
 
 /** 履歴を移動し、勝利の取り消しとタイマーの再開も通常の描画へ任せる。 */
@@ -551,6 +588,17 @@ listen(maximize, 'click', toggleMaximize);
 // 戻る・Escape・ブラウザー側の操作で全画面が終了した場合も通常表示へ戻す。
 listen(document, 'fullscreenchange', syncFullscreen);
 listen(find('new-game'), 'click', () => replaceGame(false));
+listen(find('seed-game'), 'click', showSeedInput);
+listen(find('seed-form'), 'submit', submitSeed);
+listen(seedInput, 'keydown', (event) => {
+  // 日本語 IME の変換確定 Enter は、フォームの開始操作と分ける。
+  if (event.key === 'Enter' && (event.isComposing || event.keyCode === 229)) event.preventDefault();
+});
+listen(find('seed-cancel'), 'click', () => seedDialog.close());
+listen(seedDialog, 'close', () => {
+  effects.win(isWon(getBoard(game)));
+  if (seedDialog.returnValue !== '') replaceGame(false, Number(seedDialog.returnValue));
+});
 listen(find('win-new'), 'click', () => replaceGame(false));
 listen(find('restart'), 'click', () => replaceGame(true));
 listen(find('undo'), 'click', () => changeHistory(undo));
@@ -559,7 +607,7 @@ listen(find('records-link'), 'click', (event) => { event.preventDefault(); showR
 listen(document, 'keydown', (event) => {
   // 入力欄の編集や IME・確認ダイアログでは、ブラウザー本来のキー操作を優先する。
   const editing = event.target.closest('input:not([type=checkbox]), textarea, select') || event.target.isContentEditable;
-  const modal = dialog.open || recordsDialog.open;
+  const modal = dialog.open || recordsDialog.open || seedDialog.open;
   if (!modal && !editing && !event.isComposing && !event.altKey && !event.shiftKey
     && (event.ctrlKey || event.metaKey)) {
     const key = event.key.toLowerCase();

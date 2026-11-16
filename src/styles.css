@@ -47,7 +47,7 @@ h1 { font-size: 1.35rem; margin: 0; letter-spacing: -.03em; }
 .site-footer { color: #536658; font-size: .8rem; }
 .site-footer a, #version { margin-left: .75rem; color: inherit; }
 .toolbar { display: flex; flex-wrap: wrap; gap: .65rem; justify-content: space-between; }
-.actions { display: flex; gap: .5rem; }
+.actions { display: flex; flex-wrap: wrap; gap: .5rem; }
 .auto-toggle { display: flex; align-items: center; gap: .35rem; font-size: .875rem; white-space: nowrap; cursor: pointer; }
 .auto-toggle input { margin: 0; accent-color: #214e3c; }
 .scoreboard { display: inline-flex; gap: 2rem; margin: .5rem 0; }
@@ -55,6 +55,9 @@ h1 { font-size: 1.35rem; margin: 0; letter-spacing: -.03em; }
 dt { font-size: .8rem; color: #536658; }
 dd { margin: 0; font-size: 1.25rem; font-weight: 650; font-variant-numeric: tabular-nums; }
 dd small { font-size: .8rem; font-weight: normal; color: #536658; }
+/* シードはコピーできる通常の文字として表示し、最大化中も同じ要素を使う。 */
+.seed-display { display: inline-flex; gap: .4rem; font-size: .75rem; margin: .2rem .75rem .2rem 0; }
+#seed { font-variant-numeric: tabular-nums; }
 .message { min-height: 3rem; margin: .4rem 0; font-size: .875rem; }
 .board-scroll { position: relative; max-width: 100%; overflow-x: auto; border-radius: .85rem; background: #214e3c; }
 #maximize { display: none; position: absolute; top: 2px; right: 8px; z-index: 101; }
@@ -134,12 +137,16 @@ dialog { width: min(100% - 2rem, 28rem); max-height: 90dvh; overflow: auto; padd
 dialog::backdrop { background: #102b26a6; }
 dialog h2 { font-size: 1.2rem; margin-top: 0; }
 .dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: .65rem; margin-top: 1.5rem; }
+#seed-input { display: block; width: 100%; padding: .5rem; font: inherit; font-size: 16px; }
+#seed-error { color: #8a4215; }
 /* ランキングは短い画面でもダイアログ内をスクロールできる。リンクは最大化の左欄にも残す。 */
 #records-link { display: inline-block; padding-block: .3rem; font-size: .8rem; }
 #records-dialog { padding: 1rem; }
 #records-status:empty { display: none; }
 #records-dialog table { width: 100%; table-layout: fixed; font-size: .75rem; text-align: left; }
 #records-dialog ol { padding: 0; list-style: none; }
+#records-dialog li + li { margin-top: .5rem; }
+.record-seed { display: block; min-height: 1.6em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 /* 小画面は全 8 列を並べる。高さと重なり幅は残り画面高に応じて JS で調整する。 */
 @media (max-width: 800px), (max-height: 500px) {
   .site-header, main, .site-footer { width: calc(100% - 1rem); }
@@ -173,6 +180,7 @@ dialog h2 { font-size: 1.2rem; margin-top: 0; }
 /* 時間・手数・ホーム枚数は既存の表示を縦に並べ、更新処理も通常画面と共有する。 */
 .maximized .scoreboard { display: flex; flex-direction: column; gap: 0; }
 .maximized .scoreboard > div { justify-content: space-between; }
+.maximized .seed-display, .maximized #seed { display: block; }
 .maximized .actions { display: contents; }
 /* 同じ音声ボタンを左下に置く。操作欄はその上端までに収め、スクロール中も重ねない。 */
 .maximized #sound-toggle { visibility: visible; position: fixed; left: 8px; bottom: 8px; z-index: 202; width: 40px; height: 40px; padding: 0; font-size: 20px; }

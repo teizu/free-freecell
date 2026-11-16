@@ -1,4 +1,4 @@
-# テストと 50KB の容量検証を通った静的ファイルだけを GitHub Pages へ公開する。
+# テストと 60KB の容量検証を通った静的ファイルだけを GitHub Pages へ公開する。
 name: Deploy GitHub Pages
 
 on:

@@ -24,6 +24,7 @@
           <div class="toolbar" aria-label="操作">
             <div class="actions">
               <button id="new-game" class="primary">新しいゲーム</button>
+              <button id="seed-game">シードを指定して新ゲーム</button>
               <button id="restart">最初からやり直す</button>
             </div>
             <div class="actions">
@@ -40,6 +41,7 @@
             <div><dt>手数</dt><dd id="moves">0</dd></div>
             <div><dt>ホーム</dt><dd><span id="progress">0</span><small> / 52</small></dd></div>
           </dl>
+          <p class="seed-display">シード <span id="seed"></span></p>
           <a id="records-link" href="#records-dialog">成績ランキング</a>
         </div>
         <p id="message" class="message" role="status" aria-live="polite" aria-atomic="true">カード → 移動先を選択。</p>
@@ -71,6 +73,7 @@
         <p>Ctrl-Zで戻す、Ctrl-Yでやり直す（Macは⌘も可）。</p>
         <p>「自動」は安全な札をホームへ。チェック時は初手以降に自動実行。「戻す」で1枚ずつ取消。</p>
         <p>進行は自動保存。準備後はオフライン可。データ・キャッシュ削除で失われます。</p>
+        <p>同じシードを指定すると同じ配札で開始できます。</p>
         <p>ランダム配りで解けない場合あり。</p>
       </details>
     </main>
@@ -83,6 +86,18 @@
         <div class="dialog-actions">
           <button id="confirm-cancel" value="cancel"></button>
           <button id="confirm-accept" class="primary" value="accept"></button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="seed-dialog" aria-labelledby="seed-title">
+      <form id="seed-form" novalidate>
+        <h2 id="seed-title">シードを指定して新ゲーム</h2>
+        <label for="seed-input">シード（0〜4294967295）</label>
+        <input id="seed-input" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" aria-describedby="seed-error" autofocus>
+        <p id="seed-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button id="seed-cancel" type="button">キャンセル</button>
+          <button id="seed-start" type="submit" class="primary">開始する</button>
         </div>
       </form>
     </dialog>

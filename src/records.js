@@ -1,4 +1,5 @@
 /** クリア成績だけをブラウザーに保存する。進行中の局や他の保存キーは変更しない。 */
+import { validSeed } from './seed.js';
 
 /** 時間表示は盤面と成績で共有し、1 時間以上でも分を切り捨てない。 */
 export function formatTime(seconds) {
@@ -9,6 +10,7 @@ export function formatTime(seconds) {
 export function validRecord(entry) {
   return entry && typeof entry.id === 'string' && entry.id.length === 36
     && typeof entry.date === 'string' && Number.isFinite(Date.parse(entry.date))
+    && (entry.seed === undefined || entry.seed === '' || validSeed(entry.seed))
     && ['time', 'moves'].every(field => Number.isSafeInteger(entry[field]) && entry[field] >= 0);
 }
 
@@ -20,7 +22,8 @@ export function loadRecords(key, storage = () => localStorage) {
       && list.length <= 3 && list.every(validRecord))) {
       throw new Error();
     }
-    return { records, error: '' };
+    // シード導入前の成績も表示できるよう補い、閲覧だけでは保存内容を書き換えない。
+    return { records: records.map(list => list.map(entry => ({ ...entry, seed: entry.seed ?? '' }))), error: '' };
   } catch {
     return { records: [[], []], error: '成績を読み込めません。' };
   }
@@ -33,6 +36,8 @@ export function loadRecords(key, storage = () => localStorage) {
 export function saveRecord(key, entry, storage = () => localStorage) {
   const { records, error } = loadRecords(key, storage);
   if (error) return { error, updated: [false, false] };
+  // 旧形式の途中局をクリアした場合も、値不明を 0 と取り違えず空欄で記録する。
+  entry = { ...entry, seed: entry.seed ?? '' };
   const next = ['time', 'moves'].map((field, index) => {
     const list = records[index];
     return (list.some(item => item.id === entry.id) ? list : [...list, entry])
